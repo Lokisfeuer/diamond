@@ -52,24 +52,33 @@ class NeuralNetwork(nn.Module):
 
 def main():
     data = pd.read_csv('diamonds.csv')
-    data, prices = normalize_data(data)
+    data, prices, maxi, mini = normalize_data(data)
+    # data = data[:100]
+    # prices = prices[:100]
+    test_input = torch.tensor([data[2]], dtype=torch.float32)
+    price = get_real_price(prices[2][0], maxi, mini)
     data = torch.tensor(data, dtype=torch.float32)
     prices = torch.tensor(prices, dtype=torch.float32)
     dataset = CustomDiamondDataset(data, prices)
     print(len(data[0]))
-    dataloader = DataLoader(dataset=dataset, batch_size=40, shuffle=True, num_workers=2)
+    dataloader = DataLoader(dataset=dataset, batch_size=4, shuffle=True, num_workers=2)
     model = NeuralNetwork(len(data[0]))
     print(type(data))
     print(type(prices))
-    loss = nn.MSELoss
+    loss = nn.MSELoss()
     optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
-    for epoch in range(100):
-        for step, (input, label) in enumerate(dataloader):
-            y_pred = model(input)
-            l = loss(label, y_pred)
+    epochs = 100
+
+    print(f'Prediction beforehand: {get_real_price(model(test_input).item(), maxi, mini)}\n\ncorrect was: {price}')
+    for epoch in range(epochs):
+        print(f'Starting new batch {epoch+1}/{epochs}')
+        for step, (inputs, labels) in enumerate(dataloader):
+            y_pred = model(inputs)
+            l = loss(labels, y_pred)
             l.backward()
             optimizer.step()
             optimizer.zero_grad()
+    print(f'Prediction afterwards: {get_real_price(model(test_input).item(), maxi, mini)}\n\ncorrect was: {price}')
     '''
     n_samples, n_features = data.shape
     input_size = n_features
@@ -132,8 +141,10 @@ def long_roberta(sentences):
     return sentence_embeddings
 
 
-def invert_min_max(val, min, max):
-    return (max-min) * val + min
+def get_real_price(val, maxi, mini):
+    x = (maxi-mini) * val + mini
+    return math.exp(x)
+
 
 def normalize_data(data):
     # don't forget to normalize data - hot encoding
@@ -185,8 +196,8 @@ def normalize_data(data):
         new_diamond = [diamond[0]]
         for j in range(3):
             index = indeces[j][diamond[j+1]]
-            zeros = [0]*len(indeces[j].keys())
-            zeros[index] = 1
+            zeros = [0.]*len(indeces[j].keys())
+            zeros[index] = 1.
             for k in zeros:
                 new_diamond.append(k)
         for j in [4, 5, 7, 8]:
@@ -194,13 +205,15 @@ def normalize_data(data):
         new_array.append(new_diamond)
         prices.append(math.log(diamond[6]))
 
+    maxi = max(prices)
+    mini = min(prices)
     scaler = MinMaxScaler()
     data = pd.DataFrame(new_array)
     prices = pd.DataFrame(prices)
     normalized_data = scaler.fit_transform(data)
     normalized_prices = scaler.fit_transform(prices)
 
-    return normalized_data, normalized_prices
+    return normalized_data, normalized_prices, maxi, mini
 
 
 if __name__ == '__main__':
