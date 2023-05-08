@@ -1,3 +1,5 @@
+# https://pytorch.org/tutorials/beginner/introyt/trainingyt.html
+
 import numpy as np
 import math
 import jupyter
@@ -55,7 +57,7 @@ def main():
     data, prices, maxi, mini = normalize_data(data)
     # data = data[:100]
     # prices = prices[:100]
-    test_input = torch.tensor([data[2]], dtype=torch.float32)
+    test_input = torch.tensor(np.array([data[2]]), dtype=torch.float32)
     price = get_real_price(prices[2][0], maxi, mini)
     data = torch.tensor(data, dtype=torch.float32)
     prices = torch.tensor(prices, dtype=torch.float32)
