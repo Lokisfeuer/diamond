@@ -302,6 +302,15 @@ def normalize_data(data):
 
 
 if __name__ == '__main__':
-    kwargs = {}
+    kwargs = {
+        'epochs':10,
+        'learning_rate':0.01,
+        'test_size':5000,
+        'train_batch_size':10,
+        'validation_batch_size':512,
+        'num_workers':2,
+        'loss':'nn.MSELoss()',
+        'optimizer':'torch.optim.SGD(model.parameters(), lr=learning_rate)'
+    }
     main(**kwargs)
 
