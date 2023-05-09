@@ -11,7 +11,7 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import datasets
 from torchvision.transforms import ToTensor
 import matplotlib.pyplot as plt
-import torch.nn.functional as F
+import torch.nn.functional as f
 from kaggle.api.kaggle_api_extended import KaggleApi
 api = KaggleApi()
 api.authenticate()
@@ -53,34 +53,88 @@ class NeuralNetwork(nn.Module):
 
 
 def main():
-    data = pd.read_csv('diamonds.csv')
+    data = pd.read_csv('diamonds.csv')  # adjust for notebook to loading from url
     data, prices, maxi, mini = normalize_data(data)
     # data = data[:100]
     # prices = prices[:100]
-    test_input = torch.tensor(np.array([data[2]]), dtype=torch.float32)
-    price = get_real_price(prices[2][0], maxi, mini)
+    test_input = torch.tensor(np.array([data[500]]), dtype=torch.float32)
+    price = get_real_price(prices[500][0], maxi, mini)
     data = torch.tensor(data, dtype=torch.float32)
     prices = torch.tensor(prices, dtype=torch.float32)
     dataset = CustomDiamondDataset(data, prices)
-    print(len(data[0]))
-    dataloader = DataLoader(dataset=dataset, batch_size=4, shuffle=True, num_workers=2)
-    model = NeuralNetwork(len(data[0]))
-    print(type(data))
-    print(type(prices))
-    loss = nn.MSELoss()
-    optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
-    epochs = 100
+    test_size = 5000
+    train_set, val_set = torch.utils.data.random_split(dataset, [len(data)-test_size, test_size])
 
-    print(f'Prediction beforehand: {get_real_price(model(test_input).item(), maxi, mini)}\n\ncorrect was: {price}')
+    valloader = DataLoader(dataset=val_set, batch_size=512, shuffle=True, num_workers=2)
+    dataloader = DataLoader(dataset=train_set, batch_size=10, shuffle=True, num_workers=2)
+    model = NeuralNetwork(len(data[0]))
+    learning_rate = 0.01
+    loss = nn.MSELoss()  # try others: r squared metric scale from -1 (opposite) to 1 (ideal) to infinite (wrong again); accuracy error
+    optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
+    epochs = 10
+
+    print(f'Prediction beforehand: {get_real_price(model(test_input).item(), maxi, mini)}\t\tcorrect was: {price}')
     for epoch in range(epochs):
         print(f'Starting new batch {epoch+1}/{epochs}')
+        avg_loss = 0.
+        # check_accuracy(valloader, model, maxi, mini)
         for step, (inputs, labels) in enumerate(dataloader):
+            # calculate r squarred loss
             y_pred = model(inputs)
-            l = loss(labels, y_pred)
+            l = loss(y_pred, labels)
             l.backward()
             optimizer.step()
             optimizer.zero_grad()
-    print(f'Prediction afterwards: {get_real_price(model(test_input).item(), maxi, mini)}\n\ncorrect was: {price}')
+            avg_loss += l.item()  # l.item()
+        checkpoint = {
+            'epoch': epoch,
+            'model_state': model.state_dict(),
+            'optim_state': optimizer.state_dict(),
+        }
+        torch.save(checkpoint, 'checkpoint.pth')
+        # to load:
+        # loaded_checkpoint =torch.load('checkpoint.pth')
+        # model = nn.
+        print(avg_loss/len(dataloader))
+    print(f'Prediction afterwards: {get_real_price(model(test_input).item(), maxi, mini)}\t\tcorrect was: {price}')
+    file = 'model.pth'
+    torch.save(model.state_dict(), file)
+    evaluate_model(model, valloader, maxi, mini, loss)
+
+def load_model(data, file = 'model.pth'):
+    valloader = DataLoader(dataset=val_set, batch_size=512, shuffle=True, num_workers=2)
+
+    loaded_model = NeuralNetwork(len(data[0]))
+    loaded_model.load_state_dict(torch.load(file))
+    return loaded_model
+
+
+def evaluate_model(model, valloader, maxi, mini, loss):
+    print('\n\nStart evaluating')
+    with torch.no_grad():
+        # try using accuracy in addition to loss
+        model.eval()
+        avg_loss = 0.
+        for step, (inputs, labels) in enumerate(valloader):
+            mistakes = []
+            percentages = []
+            y_pred = model(inputs)
+            for pred, label in zip(y_pred, labels):
+                pr = get_real_price(pred, maxi, mini)
+                la = get_real_price(label, maxi, mini)
+                # print(f'Estimation: {p}; True: {la}')
+                mistakes.append(abs(pr-la))
+                percentages.append(abs(pr-la)/la)
+            l = loss(y_pred, labels)
+            print(f'Average real-price error for this batch was: \t\t\t\t\t{sum(mistakes)/len(mistakes)}.')
+            print(f'Average real-price error relative to the price in percent was: '
+                  f'\t{sum(percentages)/len(percentages)*100}%.')
+            print(f'Average loss for this batch was \t\t\t\t\t\t\t\t{l.item()}\n')
+            avg_loss += l.item()  # l.item()
+        print(f'Overall average loss was: {avg_loss / len(valloader)}')
+        model.train()
+    # Graph test over training !
+    # plot everything on the graph, accuracy, MSEloss, R^2loss, percentage_price%
     '''
     n_samples, n_features = data.shape
     input_size = n_features
@@ -103,9 +157,35 @@ def main():
     '''
 
 
+# check accuracy causes Error - not used
+def check_accuracy(loader, model, maxi, mini):
+
+    model.eval()
+    with torch.no_grad():
+        aver = []
+        for x, y in loader:
+            correct = get_real_price(y.item(), maxi, mini)
+            resp = model(x)
+            price = get_real_price(resp.item(), maxi, mini)
+            aver.append(abs(correct - price))
+        model.train()
+        print(sum(aver)/len(aver))
+        return sum(aver)/len(aver)
+            #scores = model(x)
+            #res = scores.unsqueeze(1) - y
+            #a = torch.mean(res).item()
+            #aver.append(a)
+
+            #_, predictions = scores.max(1)
+            #num_correct += (predictions == y).sum()
+            #num_samples += predictions.size(0)
+
+        # print(f'Got {num_correct} / {num_samples} with accuracy {float(num_correct) / float(num_samples) * 100:.2f}')
+
+
 # both robertas fully copied from https://huggingface.co/sentence-transformers/all-roberta-large-v1
 def short_roberta(sentences):
-    sentences = ["This is an example sentence", "Each sentence is converted"]
+    # sentences = ["This is an example sentence", "Each sentence is converted"]
 
     model = SentenceTransformer('sentence-transformers/all-roberta-large-v1')
     embeddings = model.encode(sentences)
@@ -138,7 +218,7 @@ def long_roberta(sentences):
     sentence_embeddings = mean_pooling(model_output, encoded_input['attention_mask'])
 
     # Normalize embeddings
-    sentence_embeddings = F.normalize(sentence_embeddings, p=2, dim=1)
+    sentence_embeddings = f.normalize(sentence_embeddings, p=2, dim=1)
 
     return sentence_embeddings
 
@@ -149,13 +229,12 @@ def get_real_price(val, maxi, mini):
 
 
 def normalize_data(data):
-    # don't forget to normalize data - hot encoding
-        # max / min normalization the dataset
-    # scalars stay normal columns, categories get different columns
-    # put price on a logarythmic scale
+    # max / min normalization the dataset
+    # scalars stay normal columns, categories get different columns - one hot encoding
+    # price on a logarythmic scale
 
     '''
-    lets build a tensor with the following dimensions:
+    let's build a tensor with the following dimensions:
         carat
         *cut* (hot encoding)
             ideal
