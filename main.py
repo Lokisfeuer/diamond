@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 import torch.nn.functional as f
 from kaggle.api.kaggle_api_extended import KaggleApi
 api = KaggleApi()
-api.authenticate()
+# api.authenticate() # comment out for jupyter
 import os
 import pandas as pd
 from torchvision.io import read_image
@@ -52,8 +52,13 @@ class NeuralNetwork(nn.Module):
         return logits
 
 
-def main():
-    data = pd.read_csv('diamonds.csv')  # adjust for notebook to loading from url
+def main(epochs=10, learning_rate=0.01, test_size=5000, train_batch_size=10, validation_batch_size=512, num_workers=2, loss=None, optimizer=None):
+    if loss is None:
+        loss = 'nn.MSELoss()'
+    if optimizer is None:
+        optimizer = 'torch.optim.SGD(model.parameters(), lr=learning_rate)'
+    url = 'https://raw.githubusercontent.com/Lokisfeuer/diamond/master/diamonds.csv'
+    data = pd.read_csv('diamonds.csv')  # for jupyter: data = pd.read_csv(url)
     data, prices, maxi, mini = normalize_data(data)
     # data = data[:100]
     # prices = prices[:100]
@@ -62,16 +67,15 @@ def main():
     data = torch.tensor(data, dtype=torch.float32)
     prices = torch.tensor(prices, dtype=torch.float32)
     dataset = CustomDiamondDataset(data, prices)
-    test_size = 5000
     train_set, val_set = torch.utils.data.random_split(dataset, [len(data)-test_size, test_size])
 
-    valloader = DataLoader(dataset=val_set, batch_size=512, shuffle=True, num_workers=2)
-    dataloader = DataLoader(dataset=train_set, batch_size=10, shuffle=True, num_workers=2)
+    valloader = DataLoader(dataset=val_set, batch_size=validation_batch_size, shuffle=True, num_workers=num_workers)
+    dataloader = DataLoader(dataset=train_set, batch_size=train_batch_size, shuffle=True, num_workers=num_workers)
     model = NeuralNetwork(len(data[0]))
-    learning_rate = 0.01
-    loss = nn.MSELoss()  # try others: r squared metric scale from -1 (opposite) to 1 (ideal) to infinite (wrong again); accuracy error
-    optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
-    epochs = 10
+    loss = eval(loss)
+    optimizer = eval(optimizer)
+    # loss = nn.MSELoss()  # try others: r squared metric scale from -1 (opposite) to 1 (ideal) to infinite (wrong again); accuracy error
+    # optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
 
     print(f'Prediction beforehand: {get_real_price(model(test_input).item(), maxi, mini)}\t\tcorrect was: {price}')
     for epoch in range(epochs):
@@ -298,5 +302,6 @@ def normalize_data(data):
 
 
 if __name__ == '__main__':
-    main()
+    kwargs = {}
+    main(**kwargs)
 
