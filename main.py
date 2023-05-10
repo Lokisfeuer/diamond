@@ -16,8 +16,8 @@ from torchvision.transforms import ToTensor
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import torch.nn.functional as f
-from kaggle.api.kaggle_api_extended import KaggleApi
-api = KaggleApi()
+# from kaggle.api.kaggle_api_extended import KaggleApi
+# api = KaggleApi()
 # api.authenticate() # comment out for jupyter
 import pandas as pd
 from torchvision.io import read_image
@@ -70,8 +70,6 @@ def main(epochs=10, learning_rate=0.01, test_size=1000, train_batch_size=10, val
     data, prices, maxi, mini = normalize_data(data)
     # data = data[:100]
     # prices = prices[:100]
-    test_input = torch.tensor(np.array([data[500]]), dtype=torch.float32)
-    price = get_real_price(prices[500][0], maxi, mini)
     data = torch.tensor(data, dtype=torch.float32)
     prices = torch.tensor(prices, dtype=torch.float32)
     dataset = CustomDiamondDataset(data, prices)
@@ -86,10 +84,6 @@ def main(epochs=10, learning_rate=0.01, test_size=1000, train_batch_size=10, val
     optimizer = eval(optimizer)
     # loss = nn.MSELoss()  # try others: r squared metric scale from -1 (opposite) to 1 (ideal) to infinite (wrong again); accuracy error
     # optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
-
-    print(f'Prediction beforehand: {get_real_price(model(test_input).item(), maxi, mini)}\t\tcorrect was: {price}')
-    running_loss = 0.
-    running_r2loss = 0.
     val_mse_loss = []
     val_r2loss = []
     val_real_price_percentage_loss = []
@@ -99,6 +93,8 @@ def main(epochs=10, learning_rate=0.01, test_size=1000, train_batch_size=10, val
     training_real_price_percentage_loss = []
     x_axis = []
     for epoch in range(epochs):
+        running_loss = 0.
+        running_r2loss = 0.
         print(f'Starting new batch {epoch+1}/{epochs}')
         # check_accuracy(valloader, model, maxi, mini)
         for step, (inputs, labels) in enumerate(dataloader):
@@ -147,7 +143,6 @@ def main(epochs=10, learning_rate=0.01, test_size=1000, train_batch_size=10, val
     args = [x_axis, val_mse_loss, training_mse_loss, val_r2loss, training_r2loss, val_real_price_percentage_loss, training_real_price_percentage_loss]
     print(args)
     graph(*args)
-    print(f'Prediction afterwards: {get_real_price(model(test_input).item(), maxi, mini)}\t\tcorrect was: {price}')
     file = '2model.pth'
     torch.save(model.state_dict(), file)
 
@@ -159,15 +154,25 @@ def graph(x_axis, val_mse_loss, training_mse_loss, val_r2loss, training_r2loss, 
     fig, ax = plt.subplots()
     ax.plot(x_axis, val_mse_loss, 'b') # ? (0)
     ax.plot(x_axis, training_mse_loss, 'r')  # 0
-    plt.savefig(f'plots/{ver}mse_ver{ra}_{now}.png')
+    print('mse loss:')
+    plt.show()
+    plt.savefig(f'plots/{ver}mse_ver{ra}_{now}.png') # comment out for jupyter
+    plt.clf()
     fig, ax = plt.subplots()
     ax.plot(x_axis, val_r2loss, 'b') # ? (0)
     ax.plot(x_axis, training_r2loss, 'r') # ? (0)
-    plt.savefig(f'plots/{ver}r2_ver{ra}_{now}.png')
+    print('r2 loss:')
+    plt.show()
+    plt.savefig(f'plots/{ver}r2_ver{ra}_{now}.png') # comment out for jupyter
+    plt.clf()
     fig, ax = plt.subplots()
     ax.plot(x_axis, val_real_price_percentage_loss, 'b') # good
     ax.plot(x_axis, training_real_price_percentage_loss, 'r') # good
-    plt.savefig(f'plots/{ver}perc_ver{ra}_{now}.png')
+    print('real price percentage loss:')
+    plt.show()
+    plt.savefig(f'plots/{ver}perc_ver{ra}_{now}.png') # comment out for jupyter
+    plt.clf()
+
 
 def load_model(data, file = '1model.pth'):
     valloader = DataLoader(dataset=val_set, batch_size=512, shuffle=True, num_workers=2)
@@ -364,4 +369,9 @@ if __name__ == '__main__':
     main(**kwargs)
     #args = [[29, 59, 89], [0.04725663047283888, 0.04288289994001389, 0.03785799648612738], [0.03140254817903042, 0.01449822638183832, 0.013357452619820832], [0.21161172389984131, 0.3071813404560089, 0.3442371547222137], [-0.1830847430229187, 0.05015255331993103, 0.08432324945926667], [86.34664962859036, 78.04877220648744, 74.22272207896643], [67.15759899285841, 91.4195255019661, 84.78499436740307]]
     #graph(*args)
+
+    # for jupyter:
+    #   comment out saving of graph (and not model?).
+    #   change reading of csv
+
 
