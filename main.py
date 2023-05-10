@@ -1,3 +1,15 @@
+'''
+These are the start command when running this as jupyter notebook on colabs:
+
+print('starting.')
+!pip install transformers
+!pip install sentence_transformers
+!pip install torchmetrics
+# https://pytorch.org/tutorials/beginner/introyt/trainingyt.html
+from IPython.core.interactiveshell import InteractiveShell
+InteractiveShell.ast_node_interactivity = "all"
+'''
+
 # https://pytorch.org/tutorials/beginner/introyt/trainingyt.html
 
 import numpy as np
@@ -373,5 +385,6 @@ if __name__ == '__main__':
     # for jupyter:
     #   comment out saving of graph (and not model?).
     #   change reading of csv
+    #   adjust start command from jupyter.
 
 
