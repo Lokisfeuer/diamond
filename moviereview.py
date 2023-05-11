@@ -64,6 +64,7 @@ class NeuralNetwork(nn.Module):
             nn.Linear(512, 512),
             nn.ReLU(),
             nn.Linear(512, 1),
+            nn.Sigmoid()
         )
 
     def forward(self, x):
@@ -72,7 +73,64 @@ class NeuralNetwork(nn.Module):
         return logits
 
 
-class
+class History():
+    def __init__(self, val_set, train_set, model, **kwargs):
+        self.val_set = val_set
+        self.train_set = train_set
+        self.model = model
+        self.kwargs = kwargs
+        self.history = {'steps': []}
+        for i in kwargs.keys():
+            self.history.update({'val_'+i: []})
+            self.history.update({'tra_'+i: []})
+        self.valloader = None
+        self.trainloader = None
+
+
+    def save(self, step):
+        short_history = {}
+        for i in self.kwargs.keys():
+            self.history.update({'val_'+i: []})
+            self.history.update({'tra_'+i: []})
+        k = 5
+        perm = torch.randperm(self.train_set.size(0))
+        short_train_set = self.train_set[perm[:k]]
+        perm = torch.randperm(self.val_set.size(0))
+        short_val_set = self.val_set[perm[:k]]
+        print(short_train_set)
+        print(short_val_set)
+        self.valloader = DataLoader(dataset=short_val_set, batch_size=5, shuffle=True, num_workers=2)
+        self.trainloader = DataLoader(dataset=short_train_set, batch_size=5, shuffle=True, num_workers=2)
+        for i, ((val_in, val_label), (tra_in, tra_label)) in enumerate(zip(self.valloader, self.trainloader)):
+            with torch.no_grad():
+                self.model.eval()
+                val_pred = self.model(val_in)
+                tra_pred = self.model(tra_in)
+                for j in self.kwargs.keys():
+                    val_l = self.kwargs[j](val_pred, val_label).item()
+                    tra_l = self.kwargs[j](tra_pred, tra_label).item()
+                    short_history['val_'+j].append(val_l)
+                    short_history['tra_'+j].append(tra_l)
+                self.model.train()
+        for i in self.kwargs.keys():
+            self.history['val_' + i].append(sum(short_history['val_' + i]) / len(short_history['val_' + i]))
+            self.history['tra_' + i].append(sum(short_history['tra_' + i]) / len(short_history['tra_' + i]))
+        self.history['steps'].append(step)
+
+
+    def plot(self):
+        figures = []
+        for i in self.kwargs.keys():
+            fig, ax = plt.subplots()
+            ax.plot(self.history['epochs'], self.history['val_' + i], 'b')
+            ax.plot(self.history['epochs'], self.history['tra_' + i], 'r')
+            print(f'{i}:')
+            plt.show()
+            figures.append(fig)
+            plt.clf()
+        return figures
+
+
 
 def main(epochs=10, learning_rate=0.01, test_size=1000, train_batch_size=10, validation_batch_size=512, num_workers=2,
          loss=None, data_factor=1):
@@ -81,7 +139,7 @@ def main(epochs=10, learning_rate=0.01, test_size=1000, train_batch_size=10, val
 
 
     writer = SummaryWriter('runs/diamond')
-    url = 'https://raw.githubusercontent.com/Lokisfeuer/diamond/master/IMDB Dataset.csv'
+    url = 'https://raw.githubusercontent.com/Lokisfeuer/diamond/master/imdbdataset.csv'
     data = pd.read_csv('IMDB Dataset.csv')  # for jupyter: data = pd.read_csv(url)
     data = data.sample(frac=data_factor)
     data, sentiments = prepare_data(data)
@@ -94,9 +152,11 @@ def main(epochs=10, learning_rate=0.01, test_size=1000, train_batch_size=10, val
     model = NeuralNetwork(len(data[0]))
     r2loss = R2Score()
     mseloss = nn.MSELoss()
+    bceloss = nn.CrossEntropyLoss()
+
     optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
 
-    #history = History(loss_functions=)
+    history = History(val_set, train_set, model, r2loss=r2loss, mseloss=mseloss, accuracy=get_acc, bceloss=bceloss)
 
     val_mse_loss = []
     val_r2loss = []
@@ -126,6 +186,7 @@ def main(epochs=10, learning_rate=0.01, test_size=1000, train_batch_size=10, val
                 running_r2loss += x
                 model.train()
             if (step + 1) % 100 == 0:  # if (step+1) % 100 == 0:
+                history.save(epoch * len(dataloader) + step)
                 mse_l, r2_l, percent_l = evaluate_model(model, valloader, loss, r2loss)
                 val_mse_loss.append(mse_l)
                 val_r2loss.append(r2_l)
@@ -152,7 +213,8 @@ def main(epochs=10, learning_rate=0.01, test_size=1000, train_batch_size=10, val
     args = [x_axis, val_mse_loss, training_mse_loss, val_r2loss, training_r2loss, val_real_price_percentage_loss,
             training_real_price_percentage_loss]
     print(args)
-    graph(*args)
+    # graph(*args)
+    history.plot()
     file = '2model.pth'
     torch.save(model.state_dict(), file)
 
@@ -178,6 +240,15 @@ def evaluate_model(model, valloader, loss, r2loss):
         model.train()
         return sum(avg_mse_loss)/len(avg_mse_loss), sum(avg_r2_loss)/len(avg_r2_loss), sum(percentages)/len(percentages)*100
 
+
+def get_acc(pred, target):
+    pred_tag = torch.round(pred)
+
+    correct_results_sum = (pred_tag == target).sum().float()
+    acc = correct_results_sum / target.shape[0]
+    acc = torch.round(acc * 100)
+
+    return acc
 
 
 def graph(x_axis, val_mse_loss, training_mse_loss, val_r2loss, training_r2loss, val_real_price_percentage_loss,
@@ -249,13 +320,14 @@ def long_roberta(sentences):
     return sentence_embeddings
 
 
-# redo this thing completely:
 def prepare_data(data):
     np_data = data.to_numpy().transpose()
     reviews = short_roberta(np_data[0])
     sentiments = np_data[1]
     sentiments[sentiments == 'positive'] = 1
     sentiments[sentiments == 'negative'] = 0
+    sentiments = np.array(sentiments, dtype=np.float32)
+    sentiments = torch.from_numpy(sentiments)
     reviews = torch.tensor(reviews, dtype=torch.float32)
     sentiments = torch.tensor(sentiments, dtype=torch.float32)
     return reviews, sentiments
@@ -273,14 +345,14 @@ def prepare_data(data):
 if __name__ == '__main__':
 
     kwargs = {
-        'epochs':10,
+        'epochs':1,
         'learning_rate':0.01,
         'test_size':1000, # 1000
         'train_batch_size':10,
         'validation_batch_size':512,
         'num_workers':2,
         'loss':nn.CrossEntropyLoss(),
-        'data_factor': 1
+        'data_factor': 0.001
     }
     # short_roberta('')
     main(**kwargs)
