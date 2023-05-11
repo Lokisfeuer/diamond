@@ -1,0 +1,9 @@
+Movie
+# https://pytorch.org/docs/stable/generated/torch.nn.BCELoss.html
+binary cross entropy loss
+
+movie reviews imdb dataset
+-> word embedding roberta
+-> dense layer
+-> single neuron
+binary cross entropy loss

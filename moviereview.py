@@ -40,10 +40,11 @@ from torch.utils.tensorboard import SummaryWriter
 from torchmetrics import R2Score
 # from torchmetrics.functional import r2_score
 
-class CustomDiamondDataset(Dataset):
-    def __init__(self, data, prices):
-        self.x = data
-        self.y = prices
+
+class CustomMovieDataset(Dataset):
+    def __init__(self, reviews, sentiments):
+        self.x = reviews
+        self.y = sentiments
         self.length = self.x.shape[0]
 
     def __len__(self):
@@ -71,33 +72,30 @@ class NeuralNetwork(nn.Module):
         return logits
 
 
-def main(epochs=10, learning_rate=0.01, test_size=1000, train_batch_size=10, validation_batch_size=512, num_workers=2, loss=None, optimizer=None, data_factor=1):
+def main(epochs=10, learning_rate=0.01, test_size=1000, train_batch_size=10, validation_batch_size=512, num_workers=2,
+         loss=None, data_factor=1):
     if loss is None:
-        loss = 'nn.MSELoss()' # TODO pass loss as function
-    if optimizer is None:
-        optimizer = 'torch.optim.SGD(model.parameters(), lr=learning_rate)'
-        
+        loss = nn.MSELoss()  # TODO pass loss as function object
+
+
     writer = SummaryWriter('runs/diamond')
-    url = 'https://raw.githubusercontent.com/Lokisfeuer/diamond/master/diamonds.csv'
-    data = pd.read_csv('diamonds.csv')  # for jupyter: data = pd.read_csv(url)
+    url = 'https://raw.githubusercontent.com/Lokisfeuer/diamond/master/IMDB Dataset.csv'
+    data = pd.read_csv('IMDB Dataset.csv')  # for jupyter: data = pd.read_csv(url)
     data = data.sample(frac=data_factor)
-    data, prices, maxi, mini = normalize_data(data)
-    # data = data[:100]
-    # prices = prices[:100]
-    data = torch.tensor(data, dtype=torch.float32)
-    prices = torch.tensor(prices, dtype=torch.float32)
-    dataset = CustomDiamondDataset(data, prices)
-    train_set, val_set = torch.utils.data.random_split(dataset, [len(data)-test_size, test_size])
+    data, sentiments = prepare_data(data)
+
+    dataset = CustomMovieDataset(data, sentiments)
+    train_set, val_set = torch.utils.data.random_split(dataset, [len(data) - test_size, test_size])
 
     valloader = DataLoader(dataset=val_set, batch_size=validation_batch_size, shuffle=True, num_workers=num_workers)
     dataloader = DataLoader(dataset=train_set, batch_size=train_batch_size, shuffle=True, num_workers=num_workers)
     model = NeuralNetwork(len(data[0]))
-    loss = eval(loss)
     r2loss = R2Score()
     mseloss = nn.MSELoss()
-    optimizer = eval(optimizer)
-    # loss = nn.MSELoss()  # try others: r squared metric scale from -1 (opposite) to 1 (ideal) to infinite (wrong again); accuracy error
-    # optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
+    optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
+
+    #history = History(loss_functions=)
+
     val_mse_loss = []
     val_r2loss = []
     val_real_price_percentage_loss = []
@@ -109,37 +107,34 @@ def main(epochs=10, learning_rate=0.01, test_size=1000, train_batch_size=10, val
     for epoch in range(epochs):
         running_loss = 0.
         running_r2loss = 0.
-        print(f'Starting new batch {epoch+1}/{epochs}')
+        print(f'Starting new batch {epoch + 1}/{epochs}')
         # check_accuracy(valloader, model, maxi, mini)
         for step, (inputs, labels) in enumerate(dataloader):
             # calculate r squarred loss
             y_pred = model(inputs)
-            for pred, label in zip(y_pred, labels):
-                pr = get_real_price(pred, maxi, mini)
-                la = get_real_price(label, maxi, mini)
-                percentages.append(abs(pr-la)/la)
             l = loss(y_pred, labels)
-            # msel = mseloss(y_pred, labels)
             l.backward()
             optimizer.step()
             optimizer.zero_grad()
             running_loss += l.item()  # l.item()
             with torch.no_grad():
                 model.eval()
+                msel = mseloss(y_pred, labels)
                 x = r2loss(y_pred, labels).item()
                 running_r2loss += x
                 model.train()
-            if (step+1) % 100 == 0: # if (step+1) % 100 == 0:
-                mse_l, r2_l, percent_l = evaluate_model(model, valloader, maxi, mini, loss, r2loss)
+            if (step + 1) % 100 == 0:  # if (step+1) % 100 == 0:
+                mse_l, r2_l, percent_l = evaluate_model(model, valloader, loss, r2loss)
                 val_mse_loss.append(mse_l)
                 val_r2loss.append(r2_l)
                 val_real_price_percentage_loss.append(percent_l)
                 training_mse_loss.append(running_loss / 100)
                 training_r2loss.append(running_r2loss / 100)
-                training_real_price_percentage_loss.append(sum(percentages)/len(percentages)*100) # to static. Why?
-                x_axis.append(epoch*len(dataloader) + step)
-                writer.add_scalar('training_mse_loss', running_loss / 100, epoch*len(dataloader) + step)
-                writer.add_scalar('training_real_price_percentage_loss', sum(percentages)/len(percentages)*100, epoch*len(dataloader) + step)
+                training_real_price_percentage_loss.append(sum(percentages) / len(percentages) * 100)  # to static. Why?
+                x_axis.append(epoch * len(dataloader) + step)
+                writer.add_scalar('training_mse_loss', running_loss / 100, epoch * len(dataloader) + step)
+                writer.add_scalar('training_real_price_percentage_loss', sum(percentages) / len(percentages) * 100,
+                                  epoch * len(dataloader) + step)
                 running_loss = 0.
                 running_r2loss = 0.
                 percentages = []
@@ -152,50 +147,14 @@ def main(epochs=10, learning_rate=0.01, test_size=1000, train_batch_size=10, val
         # to load:
         # loaded_checkpoint =torch.load('checkpoint.pth')
     writer.close()
-    args = [x_axis, val_mse_loss, training_mse_loss, val_r2loss, training_r2loss, val_real_price_percentage_loss, training_real_price_percentage_loss]
+    args = [x_axis, val_mse_loss, training_mse_loss, val_r2loss, training_r2loss, val_real_price_percentage_loss,
+            training_real_price_percentage_loss]
     print(args)
     graph(*args)
     file = '2model.pth'
     torch.save(model.state_dict(), file)
 
-def graph(x_axis, val_mse_loss, training_mse_loss, val_r2loss, training_r2loss, val_real_price_percentage_loss, training_real_price_percentage_loss):
-    path = os.path.abspath(os.getcwd())
-    ra = str(random.randint(1,100))
-    ver = str(2)
-    now = str(d.now().isoformat()).replace(':', 'I').replace('.', 'i')
-    fig, ax = plt.subplots()
-    ax.plot(x_axis, val_mse_loss, 'b') # ? (0)
-    ax.plot(x_axis, training_mse_loss, 'r')  # 0
-    print('mse loss:')
-    plt.show()
-    plt.savefig(f'plots/{ver}mse_ver{ra}_{now}.png') # comment out for jupyter
-    plt.clf()
-    fig, ax = plt.subplots()
-    ax.plot(x_axis, val_r2loss, 'b') # ? (0)
-    ax.plot(x_axis, training_r2loss, 'r') # ? (0)
-    print('r2 loss:')
-    plt.show()
-    plt.savefig(f'plots/{ver}r2_ver{ra}_{now}.png') # comment out for jupyter
-    plt.clf()
-    fig, ax = plt.subplots()
-    ax.plot(x_axis, val_real_price_percentage_loss, 'b') # good
-    ax.plot(x_axis, training_real_price_percentage_loss, 'r') # good
-    print('real price percentage loss:')
-    plt.show()
-    plt.savefig(f'plots/{ver}perc_ver{ra}_{now}.png') # comment out for jupyter
-    plt.clf()
-
-
-# not used
-def load_model(data, file = '1model.pth'):
-    valloader = DataLoader(dataset=val_set, batch_size=512, shuffle=True, num_workers=2)
-
-    loaded_model = NeuralNetwork(len(data[0]))
-    loaded_model.load_state_dict(torch.load(file))
-    return loaded_model
-
-
-def evaluate_model(model, valloader, maxi, mini, loss, r2loss):
+def evaluate_model(model, valloader, loss, r2loss):
     # print('\n\nStart evaluating')
     with torch.no_grad():
         # try using accuracy in addition to loss
@@ -206,12 +165,6 @@ def evaluate_model(model, valloader, maxi, mini, loss, r2loss):
         for step, (inputs, labels) in enumerate(valloader):
             mistakes = []
             y_pred = model(inputs)
-            for pred, label in zip(y_pred, labels):
-                pr = get_real_price(pred, maxi, mini)
-                la = get_real_price(label, maxi, mini)
-                # print(f'Estimation: {p}; True: {la}')
-                mistakes.append(abs(pr-la))
-                percentages.append(abs(pr-la)/la)
             l = loss(y_pred, labels)
             r2l = r2loss(y_pred, labels)
             # print(f'Average real-price error for this batch was: \t\t\t\t\t{sum(mistakes)/len(mistakes)}.')
@@ -225,40 +178,41 @@ def evaluate_model(model, valloader, maxi, mini, loss, r2loss):
 
 
 
+def graph(x_axis, val_mse_loss, training_mse_loss, val_r2loss, training_r2loss, val_real_price_percentage_loss,
+          training_real_price_percentage_loss):
+    path = os.path.abspath(os.getcwd())
+    ra = str(random.randint(1, 100))
+    ver = str(2)
+    now = str(d.now().isoformat()).replace(':', 'I').replace('.', 'i')
+    fig, ax = plt.subplots()
+    ax.plot(x_axis, val_mse_loss, 'b')  # ? (0)
+    ax.plot(x_axis, training_mse_loss, 'r')  # 0
+    print('mse loss:')
+    plt.show()
+    plt.savefig(f'plots/{ver}mse_ver{ra}_{now}.png')  # comment out for jupyter
+    plt.clf()
+    fig, ax = plt.subplots()
+    ax.plot(x_axis, val_r2loss, 'b')  # ? (0)
+    ax.plot(x_axis, training_r2loss, 'r')  # ? (0)
+    print('r2 loss:')
+    plt.show()
+    plt.savefig(f'plots/{ver}r2_ver{ra}_{now}.png')  # comment out for jupyter
+    plt.clf()
+    fig, ax = plt.subplots()
+    ax.plot(x_axis, val_real_price_percentage_loss, 'b')  # good
+    ax.plot(x_axis, training_real_price_percentage_loss, 'r')  # good
+    print('real price percentage loss:')
+    plt.show()
+    plt.savefig(f'plots/{ver}perc_ver{ra}_{now}.png')  # comment out for jupyter
+    plt.clf()
 
-# check accuracy causes Error - not used
-def check_accuracy(loader, model, maxi, mini):
-    model.eval()
-    with torch.no_grad():
-        aver = []
-        for x, y in loader:
-            correct = get_real_price(y.item(), maxi, mini)
-            resp = model(x)
-            price = get_real_price(resp.item(), maxi, mini)
-            aver.append(abs(correct - price))
-        model.train()
-        print(sum(aver)/len(aver))
-        return sum(aver)/len(aver)
-            #scores = model(x)
-            #res = scores.unsqueeze(1) - y
-            #a = torch.mean(res).item()
-            #aver.append(a)
 
-            #_, predictions = scores.max(1)
-            #num_correct += (predictions == y).sum()
-            #num_samples += predictions.size(0)
-
-        # print(f'Got {num_correct} / {num_samples} with accuracy {float(num_correct) / float(num_samples) * 100:.2f}')
-
-
-# both robertas fully copied from https://huggingface.co/sentence-transformers/all-roberta-large-v1
-# not used
 def short_roberta(sentences):
-    # sentences = ["This is an example sentence", "Each sentence is converted"]
-
+    # sentences = ["This is an example sentence", "One of the other reviewers has mentioned that after watching just 1 Oz episode you'll be hooked. They are right, as this is exactly what happened with me.<br /><br />The first thing that struck me about Oz was its brutality and unflinching scenes of violence, which set in right from the word GO. Trust me, this is not a show for the faint hearted or timid. This show pulls no punches with regards to drugs, sex or violence. Its is hardcore, in the classic use of the word.<br /><br />It is called OZ as that is the nickname given to the Oswald Maximum Security State Penitentary. It focuses mainly on Emerald City, an experimental section of the prison where all the cells have glass fronts and face inwards, so privacy is not high on the agenda. Em City is home to many..Aryans, Muslims, gangstas, Latinos, Christians, Italians, Irish and more....so scuffles, death stares, dodgy dealings and shady agreements are never far away.<br /><br />I would say the main appeal of the show is due to the fact that it goes where other shows wouldn't dare. Forget pretty pictures painted for mainstream audiences, forget charm, forget romance...OZ doesn't mess around. The first episode I ever saw struck me as so nasty it was surreal, I couldn't say I was ready for it, but as I watched more, I developed a taste for Oz, and got accustomed to the high levels of graphic violence. Not just violence, but injustice (crooked guards who'll be sold out for a nickel, inmates who'll kill on order and get away with it, well mannered, middle class inmates being turned into prison bitches due to their lack of street skills or prison experience) Watching Oz, you may become comfortable with what is uncomfortable viewing....thats if you can get in touch with your darker side."]
     model = SentenceTransformer('sentence-transformers/all-roberta-large-v1')
     embeddings = model.encode(sentences)
     print(embeddings)
+    print(type(embeddings))
     return embeddings
 
 
@@ -293,71 +247,17 @@ def long_roberta(sentences):
     return sentence_embeddings
 
 
-def get_real_price(val, maxi, mini):
-    x = (maxi-mini) * val + mini
-    return math.exp(x)
+# redo this thing completely:
+def prepare_data(data):
+    np_data = data.to_numpy().transpose()
+    reviews = short_roberta(np_data[0])
+    sentiments = np_data[1]
+    sentiments[sentiments == 'positive'] = 1
+    sentiments[sentiments == 'negative'] = 0
+    reviews = torch.tensor(reviews, dtype=torch.float32)
+    sentiments = torch.tensor(sentiments, dtype=torch.float32)
+    return reviews, sentiments
 
-
-def normalize_data(data):
-    # max / min normalization the dataset
-    # scalars stay normal columns, categories get different columns - one hot encoding
-    # price on a logarythmic scale
-
-    '''
-    build a tensor with the following dimensions:
-        carat
-        *cut* (hot encoding)
-            ideal
-            premium
-            good
-            very good
-            fair
-        colour (hot encoding as well)
-        clarity (dito)
-        depth
-        table
-        price
-        x
-        y
-        z
-    then min max the full thing.
-    '''
-    def onehot():
-        nb_classes = 6
-        arr = np.array([[2, 3, 4, 0]])
-        targets = arr.reshape(-1)
-        one_hot_targets = np.eye(nb_classes)[targets]
-        return one_hot_targets
-
-    onehot()
-    np_data = data.to_numpy()
-
-    cut_index = {'Fair':0, 'Good':1, 'Very Good':2, 'Premium':3, 'Ideal':4}
-    colour_index = {'J': 0, 'I': 1, 'H': 2, 'G': 3, 'F': 4, 'E': 5, 'D':6}
-    # clarity: (I1(worst), SI2, SI1, VS2, VS1, VVS2, VVS1, IF(best))
-    clarity_index = {'I1': 0, 'SI2': 1, 'SI1': 2, 'VS2': 3, 'VS1': 4, 'VVS2': 5, 'VVS1':6, 'IF': 7}
-    indeces = [cut_index, colour_index, clarity_index]
-
-
-    # carat, cut (5), colour (7), clarity (8), depth, table, price, x, y
-    new_array = []
-    prices = []
-    for i, diamond in enumerate(np_data):
-        diamond = diamond[1:]
-        new_diamond = [diamond[0]]
-        for j in range(3):
-            index = indeces[j][diamond[j+1]]
-            zeros = [0.]*len(indeces[j].keys())
-            zeros[index] = 1.
-            for k in zeros:
-                new_diamond.append(k)
-        for j in [4, 5, 7, 8]:
-            new_diamond.append(diamond[j])
-        new_array.append(new_diamond)
-        prices.append(math.log(diamond[6]))
-
-    maxi = max(prices)
-    mini = min(prices)
     # TODO better save scaler as an object
     scaler = MinMaxScaler()
     data = pd.DataFrame(new_array)
@@ -377,10 +277,10 @@ if __name__ == '__main__':
         'train_batch_size':10,
         'validation_batch_size':512,
         'num_workers':2,
-        'loss':'nn.MSELoss()',
-        'optimizer':'torch.optim.SGD(model.parameters(), lr=learning_rate)',
+        'loss':nn.CrossEntropyLoss(),
         'data_factor': 1
     }
+    # short_roberta('')
     main(**kwargs)
     #args = [[29, 59, 89], [0.04725663047283888, 0.04288289994001389, 0.03785799648612738], [0.03140254817903042, 0.01449822638183832, 0.013357452619820832], [0.21161172389984131, 0.3071813404560089, 0.3442371547222137], [-0.1830847430229187, 0.05015255331993103, 0.08432324945926667], [86.34664962859036, 78.04877220648744, 74.22272207896643], [67.15759899285841, 91.4195255019661, 84.78499436740307]]
     #graph(*args)
@@ -389,5 +289,3 @@ if __name__ == '__main__':
     #   comment out saving of graph (and not model?).
     #   change reading of csv
     #   adjust start command from jupyter.
-
-
