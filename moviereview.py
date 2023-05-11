@@ -72,6 +72,8 @@ class NeuralNetwork(nn.Module):
         return logits
 
 
+class
+
 def main(epochs=10, learning_rate=0.01, test_size=1000, train_batch_size=10, validation_batch_size=512, num_workers=2,
          loss=None, data_factor=1):
     if loss is None:
