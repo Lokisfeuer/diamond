@@ -122,8 +122,8 @@ class History():
         figures = []
         for i in self.kwargs.keys():
             fig, ax = plt.subplots()
-            ax.plot(self.history['epochs'], self.history['val_' + i], 'b')
-            ax.plot(self.history['epochs'], self.history['tra_' + i], 'r')
+            ax.plot(self.history['steps'], self.history['val_' + i], 'b')
+            ax.plot(self.history['steps'], self.history['tra_' + i], 'r')
             print(f'{i}:')
             plt.show()
             figures.append(fig)
@@ -284,8 +284,6 @@ def short_roberta(sentences):
     # sentences = ["This is an example sentence", "One of the other reviewers has mentioned that after watching just 1 Oz episode you'll be hooked. They are right, as this is exactly what happened with me.<br /><br />The first thing that struck me about Oz was its brutality and unflinching scenes of violence, which set in right from the word GO. Trust me, this is not a show for the faint hearted or timid. This show pulls no punches with regards to drugs, sex or violence. Its is hardcore, in the classic use of the word.<br /><br />It is called OZ as that is the nickname given to the Oswald Maximum Security State Penitentary. It focuses mainly on Emerald City, an experimental section of the prison where all the cells have glass fronts and face inwards, so privacy is not high on the agenda. Em City is home to many..Aryans, Muslims, gangstas, Latinos, Christians, Italians, Irish and more....so scuffles, death stares, dodgy dealings and shady agreements are never far away.<br /><br />I would say the main appeal of the show is due to the fact that it goes where other shows wouldn't dare. Forget pretty pictures painted for mainstream audiences, forget charm, forget romance...OZ doesn't mess around. The first episode I ever saw struck me as so nasty it was surreal, I couldn't say I was ready for it, but as I watched more, I developed a taste for Oz, and got accustomed to the high levels of graphic violence. Not just violence, but injustice (crooked guards who'll be sold out for a nickel, inmates who'll kill on order and get away with it, well mannered, middle class inmates being turned into prison bitches due to their lack of street skills or prison experience) Watching Oz, you may become comfortable with what is uncomfortable viewing....thats if you can get in touch with your darker side."]
     model = SentenceTransformer('sentence-transformers/all-roberta-large-v1')
     embeddings = model.encode(sentences)
-    print(embeddings)
-    print(type(embeddings))
     return embeddings
 
 
@@ -324,12 +322,15 @@ def prepare_data(data):
     np_data = data.to_numpy().transpose()
     reviews = short_roberta(np_data[0])
     sentiments = np_data[1]
-    sentiments[sentiments == 'positive'] = 1
-    sentiments[sentiments == 'negative'] = 0
-    sentiments = np.array(sentiments, dtype=np.float32)
+    sentiments[sentiments == 'positive'] = [1.]
+    sentiments[sentiments == 'negative'] = [0.]
+    sents = []
+    for i in sentiments:
+        sents.append([i])
+    sentiments = np.array(sents, dtype=np.float32)
     sentiments = torch.from_numpy(sentiments)
     reviews = torch.tensor(reviews, dtype=torch.float32)
-    sentiments = torch.tensor(sentiments, dtype=torch.float32)
+    sentiments = torch.tensor(sentiments, dtype=torch.float32)  # line needed? dtype?
     return reviews, sentiments
 
     # TODO better save scaler as an object
@@ -347,7 +348,7 @@ if __name__ == '__main__':
     kwargs = {
         'epochs':1,
         'learning_rate':0.01,
-        'test_size':1000, # 1000
+        'test_size':10, # 1000
         'train_batch_size':10,
         'validation_batch_size':512,
         'num_workers':2,
