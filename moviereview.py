@@ -90,13 +90,17 @@ class History():
     def save(self, step):
         short_history = {}
         for i in self.kwargs.keys():
-            self.history.update({'val_'+i: []})
-            self.history.update({'tra_'+i: []})
+            short_history.update({'val_'+i: []})
+            short_history.update({'tra_'+i: []})
         k = 5
+        short_train_set, waste = torch.utils.data.random_split(self.train_set, [k, len(self.train_set) - k])
+        short_val_set, waste = torch.utils.data.random_split(self.val_set, [k, len(self.val_set) - k])
+        '''
         perm = torch.randperm(self.train_set.size(0))
         short_train_set = self.train_set[perm[:k]]
         perm = torch.randperm(self.val_set.size(0))
         short_val_set = self.val_set[perm[:k]]
+        '''
         print(short_train_set)
         print(short_val_set)
         self.valloader = DataLoader(dataset=short_val_set, batch_size=5, shuffle=True, num_workers=2)
@@ -185,7 +189,7 @@ def main(epochs=10, learning_rate=0.01, test_size=1000, train_batch_size=10, val
                 x = r2loss(y_pred, labels).item()
                 running_r2loss += x
                 model.train()
-            if (step + 1) % 100 == 0:  # if (step+1) % 100 == 0:
+            if (step + 1) % 5 == 0:  # if (step+1) % 100 == 0:
                 history.save(epoch * len(dataloader) + step)
                 mse_l, r2_l, percent_l = evaluate_model(model, valloader, loss, r2loss)
                 val_mse_loss.append(mse_l)
@@ -349,7 +353,7 @@ if __name__ == '__main__':
         'epochs':1,
         'learning_rate':0.01,
         'test_size':10, # 1000
-        'train_batch_size':10,
+        'train_batch_size':4,
         'validation_batch_size':512,
         'num_workers':2,
         'loss':nn.CrossEntropyLoss(),
