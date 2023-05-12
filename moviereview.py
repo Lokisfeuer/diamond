@@ -184,7 +184,6 @@ if __name__ == '__main__':
         'data_factor': 0.001
     }
     main(**kwargs)
-
     # for jupyter:
     #   change reading of csv
     #   adjust start command from jupyter.
