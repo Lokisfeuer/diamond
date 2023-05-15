@@ -11,6 +11,7 @@ print('starting.')
 from IPython.core.interactiveshell import InteractiveShell
 InteractiveShell.ast_node_interactivity = "all"
 '''
+import math
 
 # https://pytorch.org/tutorials/beginner/introyt/trainingyt.html
 
@@ -127,7 +128,7 @@ def main(epochs=10, learning_rate=0.01, test_size=1000, train_batch_size=10, val
     model = NeuralNetwork(len(data[0]))
     r2loss = R2Score()
     mseloss = nn.MSELoss()
-    bceloss = nn.CrossEntropyLoss()
+    bceloss = nn.BCELoss()
 
     optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
 
@@ -137,6 +138,9 @@ def main(epochs=10, learning_rate=0.01, test_size=1000, train_batch_size=10, val
         print(f'Starting new batch {epoch + 1}/{epochs}')
         for step, (inputs, labels) in enumerate(dataloader):
             y_pred = model(inputs)
+            for i in y_pred:
+                if i > 1 or i < 0:
+                    print('Warning Sigmoid ain\'t working.')
             l = loss(y_pred, labels)
             l.backward()
             optimizer.step()
@@ -156,6 +160,13 @@ def get_acc(pred, target):
     return acc
 
 
+def bce_loss(pred, target):
+    sum = 0.
+    for p, t in zip(pred, target):
+        sum += t * math.log(p) + (1 - t) * math.log(1 - p)
+    sum = -1 * sum / len(target)
+    return sum
+
 def prepare_data(data):
     np_data = data.to_numpy().transpose()
     model = SentenceTransformer('sentence-transformers/all-roberta-large-v1')
@@ -174,13 +185,13 @@ def prepare_data(data):
 
 if __name__ == '__main__':
     kwargs = {
-        'epochs':1,
+        'epochs':2,
         'learning_rate':0.01,
         'test_size':10, # 1000
         'train_batch_size':4,
         'validation_batch_size':512,
         'num_workers':2,
-        'loss':nn.CrossEntropyLoss(),
+        'loss':nn.BCELoss(),
         'data_factor': 0.001
     }
     main(**kwargs)
