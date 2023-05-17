@@ -98,6 +98,7 @@ def main(epochs=10, learning_rate=0.01, test_size=1000, train_batch_size=10, val
     optimizer = eval(optimizer)
     # loss = nn.MSELoss()  # try others: r squared metric scale from -1 (opposite) to 1 (ideal) to infinite (wrong again); accuracy error
     # optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
+
     val_mse_loss = []
     val_r2loss = []
     val_real_price_percentage_loss = []
