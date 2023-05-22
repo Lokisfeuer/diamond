@@ -1,50 +1,38 @@
-# TODO comment to everything its purpose
-
-'''
-# These are the start command when running this as jupyter notebook on colabs:
-
-print('starting.')
-!pip install transformers
-!pip install sentence_transformers
-!pip install torchmetrics
-# https://pytorch.org/tutorials/beginner/introyt/trainingyt.html
-from IPython.core.interactiveshell import InteractiveShell
-InteractiveShell.ast_node_interactivity = "all"
-'''
-
-# https://pytorch.org/tutorials/beginner/introyt/trainingyt.html
-
+import numpy
 import numpy as np
-import os
-import math
-import random
-from datetime import datetime as d
-import jupyter
-from transformers import AutoTokenizer, AutoModel
 from sentence_transformers import SentenceTransformer
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
-from torchvision import datasets
-from torchvision.transforms import ToTensor
-import matplotlib as mpl
 import matplotlib.pyplot as plt
-import torch.nn.functional as f
-# from kaggle.api.kaggle_api_extended import KaggleApi
-# api = KaggleApi()
-# api.authenticate() # comment out for jupyter
 import pandas as pd
-from torchvision.io import read_image
-from sklearn.preprocessing import MinMaxScaler
-from torch.utils.tensorboard import SummaryWriter
+import openai
+from transformers import AutoTokenizer, AutoModel
 from torchmetrics import R2Score
-# from torchmetrics.functional import r2_score
+import sys
+from transformers import AutoTokenizer, AutoModel
+import torch
+import torch.nn.functional as F
 
-class CustomDiamondDataset(Dataset):
-    def __init__(self, data, prices):
-        self.x = data
-        self.y = prices
+import random
+import seaborn as sns
+from IPython.display import HTML, display
+from wordcloud import WordCloud
+import nltk
+from nltk.corpus import stopwords
+import os
+import pickle
+
+openai.api_key = os.getenv('OPENAI_API_KEY')
+
+
+class CustomTopicDataset(Dataset):
+    def __init__(self, sentences, labels):
+        self.x = sentences
+        self.y = labels
         self.length = self.x.shape[0]
+        self.shape = self.x[0].shape[0]
+        self.feature_names = ['sentences', 'labels']
 
     def __len__(self):
         return self.length
@@ -56,214 +44,157 @@ class CustomDiamondDataset(Dataset):
 class NeuralNetwork(nn.Module):
     def __init__(self, input_size):
         super().__init__()
-        self.flatten = nn.Flatten()
         self.linear_relu_stack = nn.Sequential(
-            nn.Linear(input_size, 512),
+            nn.Linear(input_size, 2048),
             nn.ReLU(),
-            nn.Linear(512, 512),
+            nn.Linear(2048, 2048),
             nn.ReLU(),
-            nn.Linear(512, 1),
+            nn.Linear(2048, 2048),
+            nn.ReLU(),
+            nn.Linear(2048, 1024),
+            nn.ReLU(),
+            nn.Linear(1024, 512),
+            nn.ReLU(),
+            nn.Linear(512, 128),
+            nn.ReLU(),
+            nn.Linear(128, 64),
+            nn.ReLU(),
+            nn.Linear(64, 32),
+            nn.ReLU(),
+            nn.Linear(32, 1),
+            nn.Sigmoid()
         )
 
     def forward(self, x):
-        x = self.flatten(x)
         logits = self.linear_relu_stack(x)
         return logits
 
 
-def main(epochs=10, learning_rate=0.01, test_size=1000, train_batch_size=10, validation_batch_size=512, num_workers=2, loss=None, optimizer=None, data_factor=1):
-    if loss is None:
-        loss = 'nn.MSELoss()' # TODO pass loss as function
-    if optimizer is None:
-        optimizer = 'torch.optim.SGD(model.parameters(), lr=learning_rate)'
-        
-    writer = SummaryWriter('runs/diamond')
-    url = 'https://raw.githubusercontent.com/Lokisfeuer/diamond/master/diamonds.csv'
-    data = pd.read_csv('diamonds.csv')  # for jupyter: data = pd.read_csv(url)
-    data = data.sample(frac=data_factor)
-    data, prices, maxi, mini = normalize_data(data)
-    # data = data[:100]
-    # prices = prices[:100]
-    data = torch.tensor(data, dtype=torch.float32)
-    prices = torch.tensor(prices, dtype=torch.float32)
-    dataset = CustomDiamondDataset(data, prices)
-    train_set, val_set = torch.utils.data.random_split(dataset, [len(data)-test_size, test_size])
+class History():
+    def __init__(self, val_set, train_set, model, **kwargs):
+        self.val_set = val_set
+        self.train_set = train_set
+        self.model = model
+        self.kwargs = kwargs
+        self.history = {'steps': []}
+        for i in kwargs.keys():
+            self.history.update({'val_'+i: []})
+            self.history.update({'tra_'+i: []})
+        self.valloader = None
+        self.trainloader = None
 
-    valloader = DataLoader(dataset=val_set, batch_size=validation_batch_size, shuffle=True, num_workers=num_workers)
-    dataloader = DataLoader(dataset=train_set, batch_size=train_batch_size, shuffle=True, num_workers=num_workers)
-    model = NeuralNetwork(len(data[0]))
-    loss = eval(loss)
-    r2loss = R2Score()
-    mseloss = nn.MSELoss()
-    optimizer = eval(optimizer)
-    # loss = nn.MSELoss()  # try others: r squared metric scale from -1 (opposite) to 1 (ideal) to infinite (wrong again); accuracy error
-    # optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
 
-    val_mse_loss = []
-    val_r2loss = []
-    val_real_price_percentage_loss = []
-    percentages = []
-    training_mse_loss = []
-    training_r2loss = []
-    training_real_price_percentage_loss = []
-    x_axis = []
-    for epoch in range(epochs):
-        running_loss = 0.
-        running_r2loss = 0.
-        print(f'Starting new batch {epoch+1}/{epochs}')
-        # check_accuracy(valloader, model, maxi, mini)
-        for step, (inputs, labels) in enumerate(dataloader):
-            # calculate r squarred loss
-            y_pred = model(inputs)
-            for pred, label in zip(y_pred, labels):
-                pr = get_real_price(pred, maxi, mini)
-                la = get_real_price(label, maxi, mini)
-                percentages.append(abs(pr-la)/la)
-            l = loss(y_pred, labels)
-            # msel = mseloss(y_pred, labels)
-            l.backward()
-            optimizer.step()
-            optimizer.zero_grad()
-            running_loss += l.item()  # l.item()
+    def save(self, step):
+        short_history = {}
+        for i in self.kwargs.keys():
+            short_history.update({'val_'+i: []})
+            short_history.update({'tra_'+i: []})
+        k = 500
+        short_train_set, waste = torch.utils.data.random_split(self.train_set, [k, len(self.train_set) - k])
+        short_val_set, waste = torch.utils.data.random_split(self.val_set, [k, len(self.val_set) - k])
+        self.valloader = DataLoader(dataset=short_val_set, batch_size=5, shuffle=True, num_workers=2)
+        self.trainloader = DataLoader(dataset=short_train_set, batch_size=5, shuffle=True, num_workers=2)
+        for i, ((val_in, val_label), (tra_in, tra_label)) in enumerate(zip(self.valloader, self.trainloader)):
             with torch.no_grad():
-                model.eval()
-                x = r2loss(y_pred, labels).item()
-                running_r2loss += x
-                model.train()
-            if (step+1) % 100 == 0: # if (step+1) % 100 == 0:
-                mse_l, r2_l, percent_l = evaluate_model(model, valloader, maxi, mini, loss, r2loss)
-                val_mse_loss.append(mse_l)
-                val_r2loss.append(r2_l)
-                val_real_price_percentage_loss.append(percent_l)
-                training_mse_loss.append(running_loss / 100)
-                training_r2loss.append(running_r2loss / 100)
-                training_real_price_percentage_loss.append(sum(percentages)/len(percentages)*100) # to static. Why?
-                x_axis.append(epoch*len(dataloader) + step)
-                writer.add_scalar('training_mse_loss', running_loss / 100, epoch*len(dataloader) + step)
-                writer.add_scalar('training_real_price_percentage_loss', sum(percentages)/len(percentages)*100, epoch*len(dataloader) + step)
-                running_loss = 0.
-                running_r2loss = 0.
-                percentages = []
-        checkpoint = {
-            'epoch': epoch,
-            'model_state': model.state_dict(),
-            'optim_state': optimizer.state_dict(),
-        }
-        torch.save(checkpoint, 'checkpoint.pth')
-        # to load:
-        # loaded_checkpoint =torch.load('checkpoint.pth')
-    writer.close()
-    args = [x_axis, val_mse_loss, training_mse_loss, val_r2loss, training_r2loss, val_real_price_percentage_loss, training_real_price_percentage_loss]
-    print(args)
-    graph(*args)
-    file = '2model.pth'
-    torch.save(model.state_dict(), file)
-
-def graph(x_axis, val_mse_loss, training_mse_loss, val_r2loss, training_r2loss, val_real_price_percentage_loss, training_real_price_percentage_loss):
-    path = os.path.abspath(os.getcwd())
-    ra = str(random.randint(1,100))
-    ver = str(2)
-    now = str(d.now().isoformat()).replace(':', 'I').replace('.', 'i')
-    fig, ax = plt.subplots()
-    ax.plot(x_axis, val_mse_loss, 'b') # ? (0)
-    ax.plot(x_axis, training_mse_loss, 'r')  # 0
-    print('mse loss:')
-    plt.show()
-    plt.savefig(f'plots/{ver}mse_ver{ra}_{now}.png') # comment out for jupyter
-    plt.clf()
-    fig, ax = plt.subplots()
-    ax.plot(x_axis, val_r2loss, 'b') # ? (0)
-    ax.plot(x_axis, training_r2loss, 'r') # ? (0)
-    print('r2 loss:')
-    plt.show()
-    plt.savefig(f'plots/{ver}r2_ver{ra}_{now}.png') # comment out for jupyter
-    plt.clf()
-    fig, ax = plt.subplots()
-    ax.plot(x_axis, val_real_price_percentage_loss, 'b') # good
-    ax.plot(x_axis, training_real_price_percentage_loss, 'r') # good
-    print('real price percentage loss:')
-    plt.show()
-    plt.savefig(f'plots/{ver}perc_ver{ra}_{now}.png') # comment out for jupyter
-    plt.clf()
+                self.model.eval()
+                val_pred = self.model(val_in)
+                tra_pred = self.model(tra_in)
+                for j in self.kwargs.keys():
+                    if len(val_pred) > 1:
+                        val_l = self.kwargs[j](val_pred, val_label).item()
+                        tra_l = self.kwargs[j](tra_pred, tra_label).item()
+                        short_history['val_'+j].append(val_l)
+                        short_history['tra_'+j].append(tra_l)
+                self.model.train()
+        for i in self.kwargs.keys():
+            self.history['val_' + i].append(sum(short_history['val_' + i]) / len(short_history['val_' + i]))
+            self.history['tra_' + i].append(sum(short_history['tra_' + i]) / len(short_history['tra_' + i]))
+        self.history['steps'].append(step)
 
 
-# not used
-def load_model(data, file = '1model.pth'):
-    valloader = DataLoader(dataset=val_set, batch_size=512, shuffle=True, num_workers=2)
-
-    loaded_model = NeuralNetwork(len(data[0]))
-    loaded_model.load_state_dict(torch.load(file))
-    return loaded_model
-
-
-def evaluate_model(model, valloader, maxi, mini, loss, r2loss):
-    # print('\n\nStart evaluating')
-    with torch.no_grad():
-        # try using accuracy in addition to loss
-        model.eval()
-        percentages = []
-        avg_mse_loss = []
-        avg_r2_loss = []
-        for step, (inputs, labels) in enumerate(valloader):
-            mistakes = []
-            y_pred = model(inputs)
-            for pred, label in zip(y_pred, labels):
-                pr = get_real_price(pred, maxi, mini)
-                la = get_real_price(label, maxi, mini)
-                # print(f'Estimation: {p}; True: {la}')
-                mistakes.append(abs(pr-la))
-                percentages.append(abs(pr-la)/la)
-            l = loss(y_pred, labels)
-            r2l = r2loss(y_pred, labels)
-            # print(f'Average real-price error for this batch was: \t\t\t\t\t{sum(mistakes)/len(mistakes)}.')
-            # print(f'Average real-price error relative to the price in percent was: '
-            #       f'\t{sum(percentages)/len(percentages)*100}%.')
-            # print(f'Average loss for this batch was \t\t\t\t\t\t\t\t{l.item()}\n')
-            avg_mse_loss.append(l.item())
-            avg_r2_loss.append(r2l.item())
-        model.train()
-        return sum(avg_mse_loss)/len(avg_mse_loss), sum(avg_r2_loss)/len(avg_r2_loss), sum(percentages)/len(percentages)*100
+    def plot(self):
+        figures = []
+        for i in self.kwargs.keys():
+            fig, ax = plt.subplots()
+            ax.plot(self.history['steps'], self.history['val_' + i], 'b')
+            ax.plot(self.history['steps'], self.history['tra_' + i], 'r')
+            print(f'{i}:')
+            plt.show()
+            figures.append(fig)
+            plt.clf()
+        return figures
 
 
 
+def generate_data(data=None, topic='Biology', nr=15):
+    def ask_ai(nr, prompt):
+        response = openai.Completion.create(model="text-davinci-003", prompt=prompt, temperature=1, max_tokens=10*nr)
+        response = '1.' + response['choices'][0]['text'] + '\n'
+        l = []
+        for i in range(nr):
+            pos = response.find(str(i + 1))
+            beg = pos + len(str(i + 1)) + 2
+            end = response[beg:].find('\n')
+            l.append(response[beg:beg + end])
+        return l
 
-# check accuracy causes Error - not used
-def check_accuracy(loader, model, maxi, mini):
-    model.eval()
-    with torch.no_grad():
-        aver = []
-        for x, y in loader:
-            correct = get_real_price(y.item(), maxi, mini)
-            resp = model(x)
-            price = get_real_price(resp.item(), maxi, mini)
-            aver.append(abs(correct - price))
-        model.train()
-        print(sum(aver)/len(aver))
-        return sum(aver)/len(aver)
-            #scores = model(x)
-            #res = scores.unsqueeze(1) - y
-            #a = torch.mean(res).item()
-            #aver.append(a)
+    def gen_sentences(nr, factor, prompt):
+        keywords = ask_ai(nr, prompt)
+        sentences = []
+        for i in keywords:
+            print(i)
+            requests = ask_ai(15*factor, f'Give me {15*factor} independent short requests about "{i}".\n\n1.')
+            demands = ask_ai(15*factor, f'Give me {15*factor} independent short demands about "{i}".\n\n1.')
+            questions = ask_ai(15*factor, f'Give me {15*factor} independent short questions about "{i}".\n\n1.')
+            facts = ask_ai(5*factor, f'Give me {5*factor} independent short factual statements about "{i}".\n\n1.')
+            sentences.extend(requests + demands + questions + facts)
+        return sentences
 
-            #_, predictions = scores.max(1)
-            #num_correct += (predictions == y).sum()
-            #num_samples += predictions.size(0)
+    if data is None:
+        all_sentences = []
+        print(f'Writing sentences about {topic}.')
+        # nr = 15
+        fac = 1
+        prompt = f'Give me {nr*2} independent keywords to the topic biology.\n\n1.'
+        all_sentences.extend(gen_sentences(nr*2, fac, prompt))
+        with open("save.p", "wb") as f:
+            pickle.dump(all_sentences, f)
+        print(f'Writing sentences not about {topic}.')
+        prompt = f'Give me {nr} topics fully unrelated to biology.\n\n1.'
+        all_sentences.extend(gen_sentences(nr, 2*fac, prompt))
+        with open("save.p", "wb") as f:
+            pickle.dump(all_sentences, f)
+        print(all_sentences)
+        print(len(all_sentences))
+        print('Labelling sentences.')
+        labels = []
+        for i in range(len(all_sentences)):
+            if i < len(all_sentences)/2:
+                labels.append(True)
+            else:
+                labels.append(False)
+        data = [all_sentences, labels]
+        data = np.array(data).transpose()
+        mapping = []
+        uni = np.unique(data)
+        for i in uni:
+            mapping.append(np.where(data == i)[0][0])
+        data = data[mapping[1:]]
+        with open("save.p", "wb") as f:
+            pickle.dump(data, f)
+        print('full data has been saved to "save.p".')
+    else:
+        # data = data[~pd.isnull(data[:,0])]  # doesn't work
+        mapping = []
+        uni = np.unique(data)
+        for i in uni:
+            mapping.append(np.where(data == i)[0][0])
+        data = data[mapping[1:]]
+    pd.DataFrame(data).to_csv(f"{topic.replace(' ', '_')}_generated_data.csv", index = False, header = ['sentences', 'labels'])
+    return pd.read_csv(f"{topic.replace(' ', '_')}_generated_data.csv")
+    # TODO needs better filters and better quality. Especially empty inputs need to be filtered out!
 
-        # print(f'Got {num_correct} / {num_samples} with accuracy {float(num_correct) / float(num_samples) * 100:.2f}')
 
-
-# both robertas fully copied from https://huggingface.co/sentence-transformers/all-roberta-large-v1
-# not used
-def short_roberta(sentences):
-    # sentences = ["This is an example sentence", "Each sentence is converted"]
-
-    model = SentenceTransformer('sentence-transformers/all-roberta-large-v1')
-    embeddings = model.encode(sentences)
-    print(embeddings)
-    return embeddings
-
-
-# not used
 def long_roberta(sentences):
     # Mean Pooling - Take attention mask into account for correct averaging
     def mean_pooling(model_output, attention_mask):
@@ -280,6 +211,7 @@ def long_roberta(sentences):
 
     # Tokenize sentences
     encoded_input = tokenizer(sentences, padding=True, truncation=True, return_tensors='pt')
+    # test if this works with truncation=False
 
     # Compute token embeddings
     with torch.no_grad():
@@ -289,106 +221,218 @@ def long_roberta(sentences):
     sentence_embeddings = mean_pooling(model_output, encoded_input['attention_mask'])
 
     # Normalize embeddings
-    sentence_embeddings = f.normalize(sentence_embeddings, p=2, dim=1)
+    sentence_embeddings = F.normalize(sentence_embeddings, p=2, dim=1)
 
     return sentence_embeddings
 
 
-def get_real_price(val, maxi, mini):
-    x = (maxi-mini) * val + mini
-    return math.exp(x)
+def prepare_data_slowly(data):
+    # data = data[data.review.str.split().str.len().le(64)]
+    np_data = data.to_numpy().transpose()
+    # use sentence embedding to encode the reviews
+    # model = SentenceTransformer('sentence-transformers/all-roberta-large-v1')
+    embedded_data = np.array([[0,0]])
+    # embedded_data = torch.load('embedded_data.pt')
+    k = 100
+    for i in range(round(len(np_data[0]) / k)):
+        reviews = long_roberta(list(np_data[0][k*i:k*i+k]))
+        labels = np_data[1][k*i:k*i+k]
+        # reviews = torch.tensor_split(reviews, 0, dim=0)
+        a = np.array([torch.tensor_split(reviews, len(reviews)), labels])
+        a = a.transpose()
+        embedded_data = np.append(embedded_data, a, axis=0)
+        if i == 0:
+            embedded_data = embedded_data[1:]
+        # embedded_data.extend(a)
+        torch.save(embedded_data, 'embedded_data.pt')
+        print(f'saved {i+1} / {len(np_data[0]) / k}')
+    return embedded_data.transpose()
 
 
-def normalize_data(data):
-    # max / min normalization the dataset
-    # scalars stay normal columns, categories get different columns - one hot encoding
-    # price on a logarythmic scale
+def check_length(data):
+    def tokenize(sentences):
+        tokenizer = AutoTokenizer.from_pretrained('sentence-transformers/all-roberta-large-v1')
+        encoded_input = tokenizer(sentences, padding=True, truncation=False, return_tensors='pt')
+        return encoded_input
 
+    sorted_data = data.reindex(data.sentences.str.len().sort_values().index[::-1]).reset_index(drop=True)
+
+    for idx, row in sorted_data.iterrows():
+        length = len(tokenize(row.sentences)['input_ids'][0])
+        if length > 512:
+            print('Warning: Paragraph longer than 512 tokens therefore to long.')
+        elif length > 128:
+            print('Warning: Paragraph longer than 128 tokens therefore longer than recommended.')
+        elif length < 80:
+            break
+
+
+
+def analyse_full_data(data):
     '''
-    build a tensor with the following dimensions:
-        carat
-        *cut* (hot encoding)
-            ideal
-            premium
-            good
-            very good
-            fair
-        colour (hot encoding as well)
-        clarity (dito)
-        depth
-        table
-        price
-        x
-        y
-        z
-    then min max the full thing.
+    max = data.review.str.len().sum()
+    print('Full set average length')
+    print(max / 50000)
+    data = data[data.review.str.split().str.len().le(64)]
+    max = data.review.str.len().sum()
+    print('Short set average length')
+    print(max / 50000)
     '''
-    def onehot():
-        nb_classes = 6
-        arr = np.array([[2, 3, 4, 0]])
-        targets = arr.reshape(-1)
-        one_hot_targets = np.eye(nb_classes)[targets]
-        return one_hot_targets
 
-    onehot()
-    np_data = data.to_numpy()
+    print('INFO')
+    data.info()
+    data.groupby(['labels']).describe()
+    print(f'Number of unique sentences: {data["sentences"].nunique()}')
+    duplicates = data[data.duplicated()]
+    print(f'Number of duplicate rows:\n{len(duplicates)}')
+    print(f'Check for nulls: {data.isnull().sum()}')
+    sns.countplot(x=data['labels'])  # ploting distribution for easier understanding
+    print(data.head(3))
 
-    cut_index = {'Fair':0, 'Good':1, 'Very Good':2, 'Premium':3, 'Ideal':4}
-    colour_index = {'J': 0, 'I': 1, 'H': 2, 'G': 3, 'F': 4, 'E': 5, 'D':6}
-    # clarity: (I1(worst), SI2, SI1, VS2, VS1, VVS2, VVS1, IF(best))
-    clarity_index = {'I1': 0, 'SI2': 1, 'SI1': 2, 'VS2': 3, 'VS1': 4, 'VVS2': 5, 'VVS1':6, 'IF': 7}
-    indeces = [cut_index, colour_index, clarity_index]
+    # let's see how data is looklike
+    random_index = random.randint(0, data.shape[0] - 3)
+    for row in data[['sentences', 'labels']][random_index:random_index + 3].itertuples():
+        _, text, label = row
+        class_name = "About topic"
+        if label == 0:
+            class_name = "Not about topic"
+        display(HTML(f"<h5><b style='color:red'>Text: </b>{text}</h5>"))
+        display(HTML(f"<h5><b style='color:red'>Target: </b>{class_name}<br><hr></h5>"))
+    # data contain so much garbage needs to be cleaned
 
+    truedata = data[data['labels'] == 1]
+    truedata = truedata['sentences']
+    falsedata = data[data['labels'] == 0]
+    falsedata = falsedata['sentences']
 
-    # carat, cut (5), colour (7), clarity (8), depth, table, price, x, y
-    new_array = []
-    prices = []
-    for i, diamond in enumerate(np_data):
-        diamond = diamond[1:]
-        new_diamond = [diamond[0]]
-        for j in range(3):
-            index = indeces[j][diamond[j+1]]
-            zeros = [0.]*len(indeces[j].keys())
-            zeros[index] = 1.
-            for k in zeros:
-                new_diamond.append(k)
-        for j in [4, 5, 7, 8]:
-            new_diamond.append(diamond[j])
-        new_array.append(new_diamond)
-        prices.append(math.log(diamond[6]))
+    def wordcloud_draw(data, color, s):
+        words = ' '.join(data)
+        cleaned_word = " ".join([word for word in words.split() if (word != 'movie' and word != 'film')])
+        wordcloud = WordCloud(stopwords=stopwords.words('english'), background_color=color, width=2500,
+                              height=2000).generate(cleaned_word)
+        plt.imshow(wordcloud)
+        plt.title(s)
+        plt.axis('off')
 
-    maxi = max(prices)
-    mini = min(prices)
-    # TODO better save scaler as an object
-    scaler = MinMaxScaler()
-    data = pd.DataFrame(new_array)
-    prices = pd.DataFrame(prices)
-    normalized_data = scaler.fit_transform(data)
-    normalized_prices = scaler.fit_transform(prices)
+    plt.figure(figsize=[20, 10])
+    plt.subplot(1, 2, 1)
+    wordcloud_draw(truedata, 'white', 'Most-common words about the topic')
 
-    return normalized_data, normalized_prices, maxi, mini
+    plt.subplot(1, 2, 2)
+    wordcloud_draw(falsedata, 'white', 'Most-common words not about the topic')
+    plt.show() # end wordcloud
 
+    data['text_word_count'] = data['sentences'].apply(lambda x: len(x.split()))
 
-if __name__ == '__main__':
+    numerical_feature_cols = ['text_word_count']
 
-    kwargs = {
-        'epochs':10,
-        'learning_rate':0.01,
-        'test_size':100, # 1000
-        'train_batch_size':10,
-        'validation_batch_size':512,
-        'num_workers':2,
-        'loss':'nn.MSELoss()',
-        'optimizer':'torch.optim.SGD(model.parameters(), lr=learning_rate)',
-        'data_factor': 0.01
-    }
-    main(**kwargs)
-    #args = [[29, 59, 89], [0.04725663047283888, 0.04288289994001389, 0.03785799648612738], [0.03140254817903042, 0.01449822638183832, 0.013357452619820832], [0.21161172389984131, 0.3071813404560089, 0.3442371547222137], [-0.1830847430229187, 0.05015255331993103, 0.08432324945926667], [86.34664962859036, 78.04877220648744, 74.22272207896643], [67.15759899285841, 91.4195255019661, 84.78499436740307]]
-    #graph(*args)
+    plt.figure(figsize=(20, 3))
+    for i, col in enumerate(numerical_feature_cols):
+        plt.subplot(1, 3, i + 1)
+        sns.histplot(data=data, x=col, bins=50, color='#6495ED')
+        plt.title(f"Distribution of Various word counts")
+    plt.tight_layout()
+    plt.show()
 
-    # for jupyter:
-    #   comment out saving of graph (and not model?).
-    #   change reading of csv
-    #   adjust start command from jupyter.
+    plt.figure(figsize=(20, 3))
+    for i, col in enumerate(numerical_feature_cols):
+        plt.subplot(1, 3, i + 1)
+        sns.histplot(data=data, x=col, hue='labels', bins=50)
+        plt.title(f"Distribution of Various word counts with respect to target")
+    plt.tight_layout()
+    plt.show()
 
 
+class TopicIdentifier:
+    def __init__(self):
+        self.running_loss = None
+        self.optimizer = None
+        self.dataloader = None
+        self.model = None
+        self.loss = None
+        self.dataframe = None
+        self.val_set = None
+        self.train_set = None
+        self.labels = None
+        self.sentences = None
+        self.embedded_data = None
+        self.raw_data = None
+        self.dataset = None
+
+    def generate_training_data(self, topic):
+        data = load_data('save.p')
+        self.raw_data = generate_data(data=data, topic=topic, nr=15)
+
+    def embedd_data(self):
+        def get_element(arr):
+            return arr[0]
+        # self.embedded_data = prepare_data_slowly(self.raw_data)
+        self.embedded_data = torch.load('embedded_data.pt').transpose()
+        tpl = tuple(map(get_element, tuple(numpy.array_split(self.embedded_data[0], len(self.embedded_data[0])))))
+        self.sentences = torch.cat(tpl)
+        self.labels = self.embedded_data[1]
+        self.labels[self.labels == True] = 1.
+        self.labels[self.labels == False] = 0.
+        self.labels = numpy.expand_dims(self.labels, axis=1).astype('float32')
+        self.labels = torch.from_numpy(self.labels)
+        self.dataset = CustomTopicDataset(self.sentences, self.labels)
+
+    def analyse_training_data(self):
+        check_length(self.raw_data)
+        analyse_full_data(self.raw_data)
+
+    def train(self, epochs, lr=0.01, val_frac=0.1, batch_size=25, loss=nn.BCELoss()):
+        def get_acc(pred, target):
+            pred_tag = torch.round(pred)
+
+            correct_results_sum = (pred_tag == target).sum().float()
+            acc = correct_results_sum / target.shape[0]
+            acc = torch.round(acc * 100)
+
+            return acc
+
+        val_len = int(round(len(self.dataset)*val_frac))
+        self.train_set, self.val_set = torch.utils.data.random_split(self.dataset, [len(self.dataset)-val_len, val_len])
+        self.dataloader = DataLoader(dataset=self.train_set, batch_size=batch_size, shuffle=True)
+        self.model = NeuralNetwork(self.dataset.shape)
+        
+        self.loss = loss
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
+
+        r2loss = R2Score()
+        mseloss = nn.MSELoss()
+        bceloss = nn.BCELoss()
+        accuracy = get_acc
+
+        history = History(self.val_set, self.train_set, self.model, r2loss=r2loss, mseloss=mseloss, accuracy=accuracy, bceloss=bceloss)
+
+        # main training loop
+        for epoch in range(epochs):
+            self.running_loss = 0.
+            print(f'Starting new batch {epoch + 1}/{epochs}')
+            for step, (inputs, labels) in enumerate(self.dataloader):
+                y_pred = self.model(inputs)
+                l = self.loss(y_pred, labels)
+                l.backward()
+                self.optimizer.step()
+                self.optimizer.zero_grad()
+                self.running_loss += l.item()
+                if (step + 1) % 100 == 0:  # if (step+1) % 100 == 0:
+                    print(f'current loss:\t\t{self.running_loss / 100}')
+                    self.running_loss = 0
+                    history.save(epoch * len(self.dataloader) + step)
+                    # save current state of the model to history
+        return history
+
+def load_data(filename):
+    with open(filename, "rb") as f:
+        data = pickle.load(f)
+    return data
+
+if __name__ == "__main__":
+    ti = TopicIdentifier()
+    ti.generate_training_data('biology')
+    # ti.analyse_training_data()
+    ti.embedd_data()
+    history = ti.train(epochs=5, lr=0.001, val_frac=0.1, batch_size=5, loss=nn.BCELoss())
+    history.plot()

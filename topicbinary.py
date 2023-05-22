@@ -271,4 +271,5 @@ if __name__ == '__main__':
     #   change reading of csv
     #   uncomment the blockstring at the beginning of the file
     data = load_data('save.p')
-    print(generate_data(data=data))
+    x = generate_data()
+    print(x)

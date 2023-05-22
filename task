@@ -7,3 +7,27 @@ movie reviews imdb dataset
 -> dense layer
 -> single neuron
 binary cross entropy loss
+
+
+Topic = 'Biology'
+
+give me 500 keywords to the topic biology
+for each keyword:
+	15 Requests  # these should be explicitly different to each other and the demands and Questions
+	15 Demands
+	15 Questions
+	5 factual statements
+
+500*50 = 25000
+
+# Give me 25 subtopics of biology  # generate 1000 sentences for each.
+
+Give me 250 topics fully unrelated to biology
+
+for each topic:
+	30 Requests
+	30 Demands
+	30 Questions
+	10 factual statements
+
+fine tune modells for each to simplify structure!

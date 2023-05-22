@@ -11,7 +11,6 @@ print('starting.')
 from IPython.core.interactiveshell import InteractiveShell
 InteractiveShell.ast_node_interactivity = "all"
 '''
-
 import math
 
 # https://pytorch.org/tutorials/beginner/introyt/trainingyt.html
@@ -24,20 +23,6 @@ from torch.utils.data import Dataset, DataLoader
 import matplotlib.pyplot as plt
 import pandas as pd
 from torchmetrics import R2Score
-
-import sys
-from transformers import AutoTokenizer, AutoModel
-import torch
-import torch.nn.functional as F
-
-import random
-import seaborn as sns
-from IPython.display import HTML, display
-from wordcloud import WordCloud
-import nltk
-from nltk.corpus import stopwords
-# nltk.download('stopwords')
-# from nltk.corpus import stopwords
 
 
 class CustomMovieDataset(Dataset):
@@ -73,11 +58,11 @@ class NeuralNetwork(nn.Module):
             nn.ReLU(),
             nn.Linear(64, 32),
             nn.ReLU(),
-            nn.Linear(32, 1),
-            nn.Sigmoid()
+            nn.Linear(32, 1)
         )
 
     def forward(self, x):
+        # print(x.shape)
         logits = self.linear_relu_stack(x)
         return logits
 
@@ -142,7 +127,7 @@ def main(epochs=10, learning_rate=0.01, test_size=1000, train_batch_size=10, val
         loss = nn.MSELoss()  # TODO pass loss as function object
     url = 'https://raw.githubusercontent.com/Lokisfeuer/diamond/master/imdbdataset.csv'
     data = pd.read_csv(url)
-    # data = data.sample(frac=data_factor)
+    data = data.sample(frac=data_factor)
     data, sentiments = prepare_data(data)
 
     dataset = CustomMovieDataset(data, sentiments)
@@ -156,12 +141,19 @@ def main(epochs=10, learning_rate=0.01, test_size=1000, train_batch_size=10, val
     model = NeuralNetwork(len(data[0]))
     r2loss = R2Score()
     mseloss = nn.MSELoss()
-    bceloss = nn.BCELoss()
+    bceloss = nn.BCEWithLogitsLoss()
 
-    optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
-    # optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
-    history = History(val_set, train_set, model, r2loss=r2loss, mseloss=mseloss, accuracy=get_acc, bceloss=bceloss)
+    #sigmoid = nn.Sigmoid()
+    #bceloss = nn.BCELoss()
+    #def bce_loss(*args):
+    #    return bceloss(sigmoid(*args))
+
+
+    # optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+
+    # history = History(val_set, train_set, model, r2loss=r2loss, mseloss=mseloss, accuracy=get_acc, bceloss=bceloss)
 
     for epoch in range(epochs):
         running_l = 0
@@ -169,16 +161,16 @@ def main(epochs=10, learning_rate=0.01, test_size=1000, train_batch_size=10, val
         for step, (inputs, labels) in enumerate(dataloader):
             y_pred = model(inputs)
             # l = loss(y_pred, labels)
-            l = mseloss(y_pred, labels)
+            l = loss(y_pred, labels)
             running_l += l.item()
             l.backward()
             optimizer.step()
             optimizer.zero_grad()
             if (step + 1) % 50 == 0:  # if (step+1) % 100 == 0:
-                history.save(epoch * len(dataloader) + step)
+                # history.save(epoch * len(dataloader) + step)
                 print(f'training loss: {running_l / 50}')
                 running_l = 0
-    history.plot()
+    # history.plot()
 
 
 def get_acc(pred, target):
@@ -212,18 +204,14 @@ def prepare_data(data):
     for i in sentiments:
         sents.append([i])
     sentiments = np.array(sents, dtype=np.float32)
-    rev = np.array(file_data, dtype=np.float32)
-    analyse_data(rev, sentiments)
-    sys.exit()
     sentiments = torch.from_numpy(sentiments)
     reviews = torch.tensor(reviews, dtype=torch.float32)
     sentiments = torch.tensor(sentiments, dtype=torch.float32)  # line needed? dtype?
     return reviews, sentiments
 
-def prepare_data_slowly(data=None):
-    if data is None:
-        url = 'https://raw.githubusercontent.com/Lokisfeuer/diamond/master/imdbdataset.csv'
-        data = pd.read_csv(url)
+def prepare_data_slowly():
+    url = 'https://raw.githubusercontent.com/Lokisfeuer/diamond/master/imdbdataset.csv'
+    data = pd.read_csv(url)
     np_data = data.to_numpy().transpose()
     # use sentence embedding to encode the reviews
     model = SentenceTransformer('sentence-transformers/all-roberta-large-v1')
@@ -235,117 +223,6 @@ def prepare_data_slowly(data=None):
         torch.save(all_reviews, 'embedded_reviews.pt')
         print(f'saved {i+1} / {len(np_data[0]) / k}')
 
-def long_roberta():
-    # Mean Pooling - Take attention mask into account for correct averaging
-    def mean_pooling(model_output, attention_mask):
-        token_embeddings = model_output[0]  # First element of model_output contains all token embeddings
-        input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
-        return torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(input_mask_expanded.sum(1), min=1e-9)
-
-    # Sentences we want sentence embeddings for
-    sentences = ['This is an example sentence', 'Each sentence is converted']
-
-    # Load model from HuggingFace Hub
-    tokenizer = AutoTokenizer.from_pretrained('sentence-transformers/all-roberta-large-v1')
-    model = AutoModel.from_pretrained('sentence-transformers/all-roberta-large-v1')
-
-    # Tokenize sentences
-    encoded_input = tokenizer(sentences, padding=True, truncation=False, return_tensors='pt')
-    # TODO: clarification on the truncation. Does it throw an error (later)
-
-    # Compute token embeddings
-    with torch.no_grad():
-        model_output = model(**encoded_input)
-
-    # Perform pooling
-    sentence_embeddings = mean_pooling(model_output, encoded_input['attention_mask'])
-
-    # Normalize embeddings
-    sentence_embeddings = F.normalize(sentence_embeddings, p=2, dim=1)
-
-    print("Sentence embeddings:")
-    print(sentence_embeddings)
-
-def analyse_full_data(dataset):
-    url = 'https://raw.githubusercontent.com/Lokisfeuer/diamond/master/imdbdataset.csv'
-    data = pd.read_csv(url)
-    max = data.review.str.len().sum()
-    print('Full set average length')
-    print(max / 50000)
-    data = data[data.review.str.split().str.len().le(64)]
-    max = data.review.str.len().sum()
-    print('Short set average length')
-    print(max / 50000)
-
-
-
-    print('INFO')
-    data.info()
-    data.groupby(['sentiment']).describe()
-    print(f'Number of unique reviews: {data["review"].nunique()}')
-    duplicates = data[data.duplicated()]
-    print(f'Number of duplicate rows:\n{len(duplicates)}')
-    print(f'Check for nulls: {data.isnull().sum()}')
-    sns.countplot(x=data['sentiment'])  # ploting distribution for easier understanding
-    print(data.head(3))
-
-    # let's see how data is looklike
-    random_index = random.randint(0, data.shape[0] - 3)
-    for row in data[['review', 'sentiment']][random_index:random_index + 3].itertuples():
-        _, text, label = row
-        class_name = "Positive"
-        if label == 0:
-            class_name = "Negative"
-        display(HTML(f"<h5><b style='color:red'>Text: </b>{text}</h5>"))
-        display(HTML(f"<h5><b style='color:red'>Target: </b>{class_name}<br><hr></h5>"))
-    # data contain so much garbage needs to be cleaned
-
-    positivedata = data[data['sentiment'] == 'positive']
-    positivedata = positivedata['review']
-    negdata = data[data['sentiment'] == 'negative']
-    negdata = negdata['review']
-
-    def wordcloud_draw(data, color, s):
-        words = ' '.join(data)
-        cleaned_word = " ".join([word for word in words.split() if (word != 'movie' and word != 'film')])
-        wordcloud = WordCloud(stopwords=stopwords.words('english'), background_color=color, width=2500,
-                              height=2000).generate(cleaned_word)
-        plt.imshow(wordcloud)
-        plt.title(s)
-        plt.axis('off')
-
-    plt.figure(figsize=[20, 10])
-    plt.subplot(1, 2, 1)
-    wordcloud_draw(positivedata, 'white', 'Most-common Positive words')
-
-    plt.subplot(1, 2, 2)
-    wordcloud_draw(negdata, 'white', 'Most-common Negative words')
-    plt.show() # end wordcloud
-
-    data['text_word_count'] = data['review'].apply(lambda x: len(x.split()))
-
-    numerical_feature_cols = ['text_word_count']
-
-    plt.figure(figsize=(20, 3))
-    for i, col in enumerate(numerical_feature_cols):
-        plt.subplot(1, 3, i + 1)
-        sns.histplot(data=data, x=col, bins=50, color='#6495ED')
-        plt.title(f"Distribution of Various word counts")
-    plt.tight_layout()
-    plt.show()
-
-    plt.figure(figsize=(20, 3))
-    for i, col in enumerate(numerical_feature_cols):
-        plt.subplot(1, 3, i + 1)
-        sns.histplot(data=data, x=col, hue='sentiment', bins=50)
-        plt.title(f"Distribution of Various word counts with respect to target")
-    plt.tight_layout()
-    plt.show()
-
-
-
-
-analyse_full_data()
 if __name__ == '__main__':
     # prepare_data_slowly()
     kwargs = {
@@ -355,21 +232,10 @@ if __name__ == '__main__':
         'train_batch_size':25,
         'validation_batch_size':512,
         'num_workers':2,
-        'loss':nn.BCELoss(),
+        'loss':nn.BCEWithLogitsLoss(),
         'data_factor': 1
     }
-    # main(**kwargs)
+    main(**kwargs)
     # for jupyter:
     #   change reading of csv
     #   adjust start command from jupyter.
-
-
-'''
-Introduction
-
-Prompt engineering
-Analyse dataset
-results of my network in beatiful graphs
-
-Speed comparison between my network and prompt engineering
-'''
