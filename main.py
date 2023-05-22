@@ -19,9 +19,11 @@ import seaborn as sns
 from IPython.display import HTML, display
 from wordcloud import WordCloud
 import nltk
+nltk.download('stopwords')
 from nltk.corpus import stopwords
 import os
 import pickle
+from datetime import datetime as d
 
 openai.api_key = os.getenv('OPENAI_API_KEY')
 
@@ -359,15 +361,20 @@ class TopicIdentifier:
         self.raw_data = None
         self.dataset = None
 
-    def generate_training_data(self, topic):
-        data = load_data('save.p')
-        self.raw_data = generate_data(data=data, topic=topic, nr=15)
+    def generate_training_data(self, topic, real=True):
+        if real:
+            self.raw_data = generate_data(topic=topic, nr=15)
+        else:
+            data = load_data('save.p')
+            self.raw_data = generate_data(data=data, topic=topic, nr=15)
 
-    def embedd_data(self):
+    def embedd_data(self, real=True):
         def get_element(arr):
             return arr[0]
-        # self.embedded_data = prepare_data_slowly(self.raw_data)
-        self.embedded_data = torch.load('embedded_data.pt').transpose()
+        if real:
+            self.embedded_data = prepare_data_slowly(self.raw_data)
+        else:
+            self.embedded_data = torch.load('embedded_data.pt').transpose()
         tpl = tuple(map(get_element, tuple(numpy.array_split(self.embedded_data[0], len(self.embedded_data[0])))))
         self.sentences = torch.cat(tpl)
         self.labels = self.embedded_data[1]
@@ -417,22 +424,36 @@ class TopicIdentifier:
                 self.optimizer.step()
                 self.optimizer.zero_grad()
                 self.running_loss += l.item()
+                # TODO: Make this dynamic to about 5 saves per epoch.
                 if (step + 1) % 100 == 0:  # if (step+1) % 100 == 0:
                     print(f'current loss:\t\t{self.running_loss / 100}')
                     self.running_loss = 0
-                    history.save(epoch * len(self.dataloader) + step)
+                    history.save(epoch + step / len(self.dataloader))
                     # save current state of the model to history
-        return history
+        now = str(d.now().isoformat()).replace(':', 'I').replace('.', 'i')
+        torch.save(self.model, f"model_{now}")
+        return history, self.model
 
 def load_data(filename):
     with open(filename, "rb") as f:
         data = pickle.load(f)
     return data
 
+def try_model(model):
+    a = input('Please enter your input sentence: ')
+    a = long_roberta(a)
+    pred = model(a)
+    print(pred.item())
+    print('Where 1 is about the topic and 0 is not.\n')
+
+
 if __name__ == "__main__":
     ti = TopicIdentifier()
     ti.generate_training_data('biology')
-    # ti.analyse_training_data()
+    ti.analyse_training_data()
     ti.embedd_data()
-    history = ti.train(epochs=5, lr=0.001, val_frac=0.1, batch_size=5, loss=nn.BCELoss())
+    # model = torch.load('model_0000-00-XXXXXIXXIXXi000000')
+    history, model = ti.train(epochs=15, lr=0.0001, val_frac=0.1, batch_size=10, loss=nn.BCELoss())
     history.plot()
+    while True:
+        try_model(model)
