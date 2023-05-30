@@ -1,38 +1,40 @@
-'''
-# These are the start commands necessary when running this as jupyter notebook on colabs:
-
-print('starting.')
-!pip install transformers
-!pip install sentence_transformers
-!pip install torchmetrics
-# https://pytorch.org/tutorials/beginner/introyt/trainingyt.html
-from IPython.core.interactiveshell import InteractiveShell
-InteractiveShell.ast_node_interactivity = "all"
-'''
+import numpy as np
 import math
-
-# import everything necessary
-import numpy as np  # for data preparation
-from sentence_transformers import SentenceTransformer  # for sentence embedding in data preparation
+from sentence_transformers import SentenceTransformer
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
-import matplotlib.pyplot as plt  # for plotting the history graphs
-import pandas as pd  # to read data in from csv
-from torchmetrics import R2Score
+import matplotlib.pyplot as plt
+import pandas as pd
 import openai
+from transformers import AutoTokenizer, AutoModel
+from torchmetrics import R2Score
+import sys
+from transformers import AutoTokenizer, AutoModel
+import torch
+import torch.nn.functional as F
+
+import random
+import seaborn as sns
+from IPython.display import HTML, display
+from wordcloud import WordCloud
+import nltk
+# nltk.download('stopwords')
+from nltk.corpus import stopwords
 import os
 import pickle
+from datetime import datetime as d
 
 openai.api_key = os.getenv('OPENAI_API_KEY')
 
 
-# The Dataset class
-class CustomMovieDataset(Dataset):
-    def __init__(self, reviews, sentiments):
-        self.x = reviews
-        self.y = sentiments
+class CustomTopicDataset(Dataset):
+    def __init__(self, sentences, labels):
+        self.x = sentences
+        self.y = labels
         self.length = self.x.shape[0]
+        self.shape = self.x[0].shape[0]
+        self.feature_names = ['sentences', 'labels']
 
     def __len__(self):
         return self.length
@@ -44,232 +46,487 @@ class CustomMovieDataset(Dataset):
 class NeuralNetwork(nn.Module):
     def __init__(self, input_size):
         super().__init__()
-        self.flatten = nn.Flatten()
         self.linear_relu_stack = nn.Sequential(
-            nn.Linear(input_size, 512),
+            nn.Linear(input_size, 2048),
             nn.ReLU(),
-            nn.Linear(512, 512),
+            nn.Linear(2048, 2048),
             nn.ReLU(),
-            nn.Linear(512, 1),
+            nn.Linear(2048, 2048),
+            nn.ReLU(),
+            nn.Linear(2048, 1024),
+            nn.ReLU(),
+            nn.Linear(1024, 512),
+            nn.ReLU(),
+            nn.Linear(512, 128),
+            nn.ReLU(),
+            nn.Linear(128, 64),
+            nn.ReLU(),
+            nn.Linear(64, 32),
+            nn.ReLU(),
+            nn.Linear(32, 1),
             nn.Sigmoid()
         )
 
     def forward(self, x):
-        x = self.flatten(x)
         logits = self.linear_relu_stack(x)
         return logits
 
 
-# This is the history class to monitor different metrics during training
-class History:
-    def __init__(self, val_set, train_set, model, **kwargs):  # kwargs are the metrics being monitored
+class History():
+    def __init__(self, val_set, train_set, model, **kwargs):
         self.val_set = val_set
         self.train_set = train_set
         self.model = model
         self.kwargs = kwargs
         self.history = {'steps': []}
         for i in kwargs.keys():
-            self.history.update({'val_'+i: []})
-            self.history.update({'tra_'+i: []})
+            self.history.update({'val_' + i: []})
+            self.history.update({'tra_' + i: []})
         self.valloader = None
         self.trainloader = None
 
-    # save current value of metrics of model.
     def save(self, step):
         short_history = {}
         for i in self.kwargs.keys():
-            short_history.update({'val_'+i: []})
-            short_history.update({'tra_'+i: []})
-        k = 5
-        # generate random datasubsets and loaders with k entries for training and validation
+            short_history.update({'val_' + i: []})
+            short_history.update({'tra_' + i: []})
+        k = 500
         short_train_set, waste = torch.utils.data.random_split(self.train_set, [k, len(self.train_set) - k])
         short_val_set, waste = torch.utils.data.random_split(self.val_set, [k, len(self.val_set) - k])
         self.valloader = DataLoader(dataset=short_val_set, batch_size=5, shuffle=True, num_workers=2)
         self.trainloader = DataLoader(dataset=short_train_set, batch_size=5, shuffle=True, num_workers=2)
-        # iterate over the dataloaders
         for i, ((val_in, val_label), (tra_in, tra_label)) in enumerate(zip(self.valloader, self.trainloader)):
             with torch.no_grad():
                 self.model.eval()
                 val_pred = self.model(val_in)
                 tra_pred = self.model(tra_in)
                 for j in self.kwargs.keys():
-                    # calculate each metric of kwargs and append value to their short history
-                    val_l = self.kwargs[j](val_pred, val_label).item()
-                    tra_l = self.kwargs[j](tra_pred, tra_label).item()
-                    short_history['val_'+j].append(val_l)
-                    short_history['tra_'+j].append(tra_l)
+                    if len(val_pred) > 1:
+                        val_l = self.kwargs[j](val_pred, val_label).item()
+                        tra_l = self.kwargs[j](tra_pred, tra_label).item()
+                        short_history['val_' + j].append(val_l)
+                        short_history['tra_' + j].append(tra_l)
                 self.model.train()
         for i in self.kwargs.keys():
-            # for each metric average over their short history and append to the history
             self.history['val_' + i].append(sum(short_history['val_' + i]) / len(short_history['val_' + i]))
             self.history['tra_' + i].append(sum(short_history['tra_' + i]) / len(short_history['tra_' + i]))
         self.history['steps'].append(step)
 
-
-    # plot the history in one graph per metric using red for training data and blue for validation data.
-    def plot(self):
+    def plot(self, path=None):
         figures = []
         for i in self.kwargs.keys():
             fig, ax = plt.subplots()
             ax.plot(self.history['steps'], self.history['val_' + i], 'b')
             ax.plot(self.history['steps'], self.history['tra_' + i], 'r')
-            print(f'{i}:')
-            plt.show()
+            ax.set_title(i.upper())
+            ax.set_ylabel(i)
+            ax.set_xlabel('Epochs')
             figures.append(fig)
-            plt.clf()
-        return figures
+            if path is None:
+                plt.show()
+                plt.clf()
+            else:
+                plt.savefig(f"{path}/{i}")
+        return figures  # what is this?
 
 
-def main(epochs=10, learning_rate=0.01, test_size=1000, train_batch_size=10, validation_batch_size=512, num_workers=2,
-         loss=None, data_factor=1):
-    if loss is None:
-        loss = nn.MSELoss()
-
-    # load and prepare data
-    url = 'https://raw.githubusercontent.com/Lokisfeuer/diamond/master/imdbdataset.csv'
-    data = pd.read_csv('IMDB Dataset.csv')  # for jupyter: data = pd.read_csv(url)
-    data = data.sample(frac=data_factor)
-    data, sentiments = prepare_data(data)
-
-    dataset = CustomMovieDataset(data, sentiments)
-    # split data into train_set and val_set
-    train_set, val_set = torch.utils.data.random_split(dataset, [len(data) - test_size, test_size])
-
-    # define dataloaders, model and metrics
-    valloader = DataLoader(dataset=val_set, batch_size=validation_batch_size, shuffle=True, num_workers=num_workers)
-    dataloader = DataLoader(dataset=train_set, batch_size=train_batch_size, shuffle=True, num_workers=num_workers)
-    model = NeuralNetwork(len(data[0]))
-    r2loss = R2Score()
-    mseloss = nn.MSELoss()
-    bceloss = nn.BCELoss()
-
-    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-
-    # define history object with metrics to monitor
-    history = History(val_set, train_set, model, r2loss=r2loss, mseloss=mseloss, accuracy=get_acc, bceloss=bceloss)
-
-    # main training loop
-    for epoch in range(epochs):
-        print(f'Starting new batch {epoch + 1}/{epochs}')
-        for step, (inputs, labels) in enumerate(dataloader):
-            y_pred = model(inputs)
-            l = loss(y_pred, labels)
-            l.backward()
-            optimizer.step()
-            optimizer.zero_grad()
-            if (step + 1) % 100 == 0:  # if (step+1) % 100 == 0:
-                history.save(epoch * len(dataloader) + step)
-                # save current state of the model to history
-    history.plot()
 
 
-# this is one of the custom metrics being monitored. Accuracy in percentage of correctly classified.
-def get_acc(pred, target):
-    pred_tag = torch.round(pred)
 
-    correct_results_sum = (pred_tag == target).sum().float()
-    acc = correct_results_sum / target.shape[0]
-    acc = torch.round(acc * 100)
+def long_roberta(sentences):
+    # Mean Pooling - Take attention mask into account for correct averaging
+    def mean_pooling(model_output, attention_mask):
+        token_embeddings = model_output[0]  # First element of model_output contains all token embeddings
+        input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
+        return torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(input_mask_expanded.sum(1), min=1e-9)
 
-    return acc
+    # Sentences we want sentence embeddings for
+    # sentences = ['This is an example sentence', 'Each sentence is converted']
 
-def prepare_data(data):
+    # Load model from HuggingFace Hub
+    tokenizer = AutoTokenizer.from_pretrained('sentence-transformers/all-roberta-large-v1')
+    model = AutoModel.from_pretrained('sentence-transformers/all-roberta-large-v1')
+
+    # Tokenize sentences
+    encoded_input = tokenizer(sentences, padding=True, truncation=True, return_tensors='pt')
+    # test if this works with truncation=False
+
+    # Compute token embeddings
+    with torch.no_grad():
+        model_output = model(**encoded_input)
+
+    # Perform pooling
+    sentence_embeddings = mean_pooling(model_output, encoded_input['attention_mask'])
+
+    # Normalize embeddings
+    sentence_embeddings = F.normalize(sentence_embeddings, p=2, dim=1)
+
+    return sentence_embeddings
+
+
+def prepare_data_slowly(data, topic):
+    # data = data[data.review.str.split().str.len().le(64)]
     np_data = data.to_numpy().transpose()
     # use sentence embedding to encode the reviews
-    model = SentenceTransformer('sentence-transformers/all-roberta-large-v1')
-    reviews = model.encode(np_data[0])
-    # encode the sentiments
-    sentiments = np_data[1]
-    sentiments[sentiments == 'positive'] = [1.]
-    sentiments[sentiments == 'negative'] = [0.]
-    sents = []
-    for i in sentiments:
-        sents.append([i])
-    sentiments = np.array(sents, dtype=np.float32)
-    sentiments = torch.from_numpy(sentiments)
-    reviews = torch.tensor(reviews, dtype=torch.float32)
-    sentiments = torch.tensor(sentiments, dtype=torch.float32)  # line needed? dtype?
-    return reviews, sentiments  # return torch tensors.
+    # model = SentenceTransformer('sentence-transformers/all-roberta-large-v1')
+    embedded_data = np.array([[0, 0]])
+    # embedded_data = torch.load('embedded_data.pt')
+    k = 100
+    for i in range(round(len(np_data[0]) / k)):
+        reviews = long_roberta(list(np_data[0][k * i:k * i + k]))
+        labels = np_data[1][k * i:k * i + k]
+        # reviews = torch.tensor_split(reviews, 0, dim=0)
+        a = np.array([torch.tensor_split(reviews, len(reviews)), labels])
+        a = a.transpose()
+        embedded_data = np.append(embedded_data, a, axis=0)
+        if i == 0:
+            embedded_data = embedded_data[1:]
+        # embedded_data.extend(a)
+        torch.save(embedded_data, f'embedded_data_{topic}.pt')
+        print(f'saved {i + 1} / {len(np_data[0]) / k}')
+    return embedded_data.transpose()
 
-def generate_data(data=None, topic='Biology'):
-    def ask_ai(nr, prompt):
-        response = openai.Completion.create(model="text-davinci-003", prompt=prompt, temperature=1, max_tokens=10*nr)
-        response = '1.' + response['choices'][0]['text'] + '\n'
-        l = []
-        for i in range(nr):
-            pos = response.find(str(i + 1))
-            beg = pos + len(str(i + 1)) + 2
-            end = response[beg:].find('\n')
-            l.append(response[beg:beg + end])
-        return l
 
-    def gen_sentences(nr, factor, prompt):
-        keywords = ask_ai(nr, prompt)
-        sentences = []
-        for i in keywords:
-            print(i)
-            requests = ask_ai(15*factor, f'Give me {15*factor} independent requests about "{i}".\n\n1.')
-            demands = ask_ai(15*factor, f'Give me {15*factor} independent demands about "{i}".\n\n1.')
-            questions = ask_ai(15*factor, f'Give me {15*factor} independent questions about "{i}".\n\n1.')
-            facts = ask_ai(5*factor, f'Give me {5*factor} independent factual statements about "{i}".\n\n1.')
-            sentences.extend(requests + demands + questions + facts)
-        return sentences
 
-    if data is None:
-        all_sentences = []
-        print(f'Writing sentences about {topic}.')
-        prompt = 'Give me 10 independent keywords to the topic biology.\n\n1.'
-        all_sentences.extend(gen_sentences(10, 1, prompt))
-        with open("save.p", "wb") as f:
-            pickle.dump(all_sentences, f)
-        print(f'Writing sentences not about {topic}.')
-        prompt = 'Give me 5 topics fully unrelated to biology.\n\n1.'
-        all_sentences.extend(gen_sentences(5, 2, prompt))
-        with open("save.p", "wb") as f:
-            pickle.dump(all_sentences, f)
-        print(all_sentences)
-        print(len(all_sentences))
-        print('Labelling sentences.')
-        labels = []
-        for i in range(len(all_sentences)):
-            if i < 400:  # if i < len(all_sentences)/2:
-                labels.append(True)
-            else:
-                labels.append(False)
-        data = [all_sentences, labels]
-        data = np.array(data).transpose()
-        with open("save.p", "wb") as f:
-            pickle.dump(data, f)
-        print('full data has been saved to "save.p".')
-    pd.DataFrame(data).to_csv("test.csv", index = False, header = ['sentence', f'about {topic}'])
-    return pd.read_csv("test.csv")
 
+
+
+
+
+
+class TopicIdentifier:
+    def __init__(self, topic):
+        self.running_loss = None
+        self.optimizer = None
+        self.dataloader = None
+        self.model = None
+        self.loss = None
+        self.dataframe = None
+        self.val_set = None
+        self.train_set = None
+        self.labels = None
+        self.sentences = None
+        self.embedded_data = None
+        self.raw_data = None
+        self.dataset = None
+        self.topic = topic
+
+    def generate_training_data(self, real=True):
+        def ask_ai(nr, prompt):
+            response = openai.Completion.create(model="text-davinci-003", prompt=prompt, temperature=1,
+                                                max_tokens=10 * nr)
+            response = '1.' + response['choices'][0]['text'] + '\n'
+            l = []
+            for i in range(nr):
+                pos = response.find(str(i + 1))
+                beg = pos + len(str(i + 1)) + 2
+                end = response[beg:].find('\n')
+                l.append(response[beg:beg + end])
+            return l
+
+        def gen_sentences(nr, factor, prompt):
+            keywords = ask_ai(nr, prompt)
+            sentences = []
+            for i in keywords:
+                print(i)
+                requests = ask_ai(15 * factor,
+                                  f'Give me {15 * factor} independent short requests about "{i}".\n\n1.')
+                demands = ask_ai(15 * factor, f'Give me {15 * factor} independent short demands about "{i}".\n\n1.')
+                questions = ask_ai(15 * factor,
+                                   f'Give me {15 * factor} independent short questions about "{i}".\n\n1.')
+                facts = ask_ai(5 * factor,
+                               f'Give me {5 * factor} independent short factual statements about "{i}".\n\n1.')
+                sentences.extend(requests + demands + questions + facts)
+            return sentences
+
+        data = None
+        if not real:
+            data = load_data('save.p')
+        if data is None:
+            all_sentences = []
+            print(f'Writing sentences about {topic}.')
+            nr = 15
+            fac = 1
+            prompt = f'Give me {nr * 2} independent keywords to the topic {topic}.\n\n1.'
+            all_sentences.extend(gen_sentences(nr * 2, fac, prompt))
+            with open("save.p", "wb") as f:
+                pickle.dump(all_sentences, f)
+            print(f'Writing sentences not about {topic}.')
+            prompt = f'Give me {nr} topics fully unrelated to {topic}.\n\n1.'
+            all_sentences.extend(gen_sentences(nr, 2 * fac, prompt))
+            with open("save.p", "wb") as f:
+                pickle.dump(all_sentences, f)
+            print(all_sentences)
+            print(len(all_sentences))
+            print('Labelling sentences.')
+            labels = []
+            for i in range(len(all_sentences)):
+                if i < len(all_sentences) / 2:
+                    labels.append(True)
+                else:
+                    labels.append(False)
+            data = [all_sentences, labels]
+            data = np.array(data).transpose()
+            mapping = []
+            uni = np.unique(data)
+            for i in uni:
+                mapping.append(np.where(data == i)[0][0])
+            data = data[mapping[1:]]
+            with open("save.p", "wb") as f:
+                pickle.dump(data, f)
+            print('full data has been saved to "save.p".')
+        else:
+            # data = data[~pd.isnull(data[:,0])]  # doesn't work
+            mapping = []
+            uni = np.unique(data)
+            for i in uni:
+                mapping.append(np.where(data == i)[0][0])
+            data = data[mapping[1:]]
+        pd.DataFrame(data).to_csv(f"{topic.replace(' ', '_')}_generated_data.csv", index=False,
+                                  header=['sentences', 'labels'])
+        self.raw_data = pd.read_csv(f"{topic.replace(' ', '_')}_generated_data.csv")
+        # TODO needs better filters and better quality. Especially empty inputs need to be filtered out!
+
+    def embedd_data(self, topic, real=True):
+        def get_element(arr):
+            return arr[0]
+
+        if real:
+            # data = data[data.review.str.split().str.len().le(64)]
+            np_data = self.raw_data.to_numpy().transpose()
+            # use sentence embedding to encode the reviews
+            # model = SentenceTransformer('sentence-transformers/all-roberta-large-v1')
+            embedded_data = np.array([[0, 0]])
+            # embedded_data = torch.load('embedded_data.pt')
+            k = 100
+            for i in range(round(len(np_data[0]) / k)):
+                reviews = long_roberta(list(np_data[0][k * i:k * i + k]))
+                labels = np_data[1][k * i:k * i + k]
+                # reviews = torch.tensor_split(reviews, 0, dim=0)
+                a = np.array([torch.tensor_split(reviews, len(reviews)), labels])
+                a = a.transpose()
+                embedded_data = np.append(embedded_data, a, axis=0)
+                if i == 0:
+                    embedded_data = embedded_data[1:]
+                # embedded_data.extend(a)
+                torch.save(embedded_data, f'embedded_data_{topic}.pt')
+                print(f'saved {i + 1} / {len(np_data[0]) / k}')
+            self.embedded_data =  embedded_data.transpose()
+        else:
+            self.embedded_data = torch.load(f'embedded_data_{topic}.pt').transpose()
+        tpl = tuple(map(get_element, tuple(np.array_split(self.embedded_data[0], len(self.embedded_data[0])))))
+        self.sentences = torch.cat(tpl)
+        self.labels = self.embedded_data[1]
+        self.labels[self.labels == True] = 1.
+        self.labels[self.labels == False] = 0.
+        self.labels = np.expand_dims(self.labels, axis=1).astype('float32')
+        self.labels = torch.from_numpy(self.labels)
+        self.dataset = CustomTopicDataset(self.sentences, self.labels)
+
+    def analyse_training_data(self):
+        def tokenize(sentences):
+            tokenizer = AutoTokenizer.from_pretrained('sentence-transformers/all-roberta-large-v1')
+            encoded_input = tokenizer(sentences, padding=True, truncation=False, return_tensors='pt')
+            return encoded_input
+
+
+        print('INFO')
+        data = self.raw_data
+        sorted_data = data.reindex(data.sentences.str.len().sort_values().index[::-1]).reset_index(drop=True)
+        for idx, row in sorted_data.iterrows():
+            length = len(tokenize(row.sentences)['input_ids'][0])
+            if length > 512:
+                print('Warning: Paragraph longer than 512 tokens therefore to long.')
+            elif length > 128:
+                print('Warning: Paragraph longer than 128 tokens therefore longer than recommended.')
+            elif length < 80:
+                break
+
+        data.info()
+        data.groupby(['labels']).describe()
+        print(f'Number of unique sentences: {data["sentences"].nunique()}')
+        duplicates = data[data.duplicated()]
+        print(f'Number of duplicate rows:\n{len(duplicates)}')
+        print(f'Check for nulls:\n{data.isnull().sum()}')
+        sns.countplot(x=data['labels'])  # ploting distribution for easier understanding
+        print(data.head(3))
+
+        print('A few random examples from the dataset:')
+        # let's see how data is looklike
+        random_index = random.randint(0, data.shape[0] - 3)
+        for row in data[['sentences', 'labels']][random_index:random_index + 3].itertuples():
+            _, text, label = row
+            class_name = "About topic"
+            if label == 0:
+                class_name = "Not about topic"
+            print(f'TEXT: {text}')
+            print(f'LABEL: {label}')
+        # data contain so much garbage needs to be cleaned
+
+        truedata = data[data['labels'] == 1]
+        truedata = truedata['sentences']
+        falsedata = data[data['labels'] == 0]
+        falsedata = falsedata['sentences']
+
+        def wordcloud_draw(data, color, s):
+            words = ' '.join(data)
+            cleaned_word = " ".join([word for word in words.split() if (word != 'movie' and word != 'film')])
+            wordcloud = WordCloud(stopwords=stopwords.words('english'), background_color=color, width=2500,
+                                  height=2000).generate(cleaned_word)
+            plt.imshow(wordcloud)
+            plt.title(s)
+            plt.axis('off')
+
+        plt.figure(figsize=[20, 10])
+        plt.subplot(1, 2, 1)
+        wordcloud_draw(truedata, 'white', 'Most-common words about the topic')
+
+        plt.subplot(1, 2, 2)
+        wordcloud_draw(falsedata, 'white', 'Most-common words not about the topic')
+        plt.show()  # end wordcloud
+
+        data['text_word_count'] = data['sentences'].apply(lambda x: len(x.split()))
+
+        numerical_feature_cols = ['text_word_count']  # numerical_feature_cols = data['text_word_count']
+
+        plt.figure(figsize=(20, 3))
+        for i, col in enumerate(numerical_feature_cols):
+            plt.subplot(1, 3, i + 1)
+            sns.histplot(data=data, x=col, bins=50, color='#6495ED')
+            plt.title(f"Distribution of Various word counts")
+        plt.tight_layout()
+        plt.show()
+
+        plt.figure(figsize=(20, 3))
+        for i, col in enumerate(numerical_feature_cols):
+            plt.subplot(1, 3, i + 1)
+            sns.histplot(data=data, x=col, hue='labels', bins=50)
+            plt.title(f"Distribution of Various word counts with respect to target")
+        plt.tight_layout()
+        plt.show()
+        # check_length(self.raw_data)
+
+    def train(self, epochs=10, lr=0.001, val_frac=0.1, batch_size=25, loss=nn.BCELoss()):
+        def get_acc(pred, target):
+            pred_tag = torch.round(pred)
+
+            correct_results_sum = (pred_tag == target).sum().float()
+            acc = correct_results_sum / target.shape[0]
+            acc = torch.round(acc * 100)
+
+            return acc
+
+        val_len = int(round(len(self.dataset) * val_frac))
+        self.train_set, self.val_set = torch.utils.data.random_split(self.dataset,
+                                                                     [len(self.dataset) - val_len, val_len])
+        self.dataloader = DataLoader(dataset=self.train_set, batch_size=batch_size, shuffle=True)
+        self.model = NeuralNetwork(self.dataset.shape)
+
+        self.loss = loss
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
+
+        r2loss = R2Score()
+        mseloss = nn.MSELoss()
+        bceloss = nn.BCELoss()
+        accuracy = get_acc
+
+        history = History(self.val_set, self.train_set, self.model, r2loss=r2loss, mseloss=mseloss, accuracy=accuracy,
+                          bceloss=bceloss)
+
+        # main training loop
+        for epoch in range(epochs):
+            self.running_loss = 0.
+            print(f'Starting new batch {epoch + 1}/{epochs}')
+            for step, (inputs, labels) in enumerate(self.dataloader):
+                y_pred = self.model(inputs)
+                l = self.loss(y_pred, labels)
+                l.backward()
+                self.optimizer.step()
+                self.optimizer.zero_grad()
+                self.running_loss += l.item()
+                # TODO: Make this dynamic to about 5 saves per epoch.
+                if (step + 1) % math.floor(len(self.dataloader)) == 0:  # if (step+1) % 100 == 0:
+                    print(f'current loss:\t\t{self.running_loss / 100}')
+                    self.running_loss = 0
+                    history.save(epoch + step / len(self.dataloader))
+                    # save current state of the model to history
+        now = str(d.now().isoformat()).replace(':', 'I').replace('.', 'i')
+        os.mkdir(f"model_{now}")
+        torch.save(self.model, f"model_{now}/model.pt")
+        print(f'Model saved to "model_{now}/model.pt"')
+        history.plot(f"model_{now}")
+        return history, self.model
 
 
 def load_data(filename):
     with open(filename, "rb") as f:
         data = pickle.load(f)
-    print(data)
-    print(f'Len data: {len(data)}')
     return data
 
 
-if __name__ == '__main__':
-    # call main function with these parameters:
-    kwargs = {
-        'epochs':10,
-        'learning_rate':0.01,
-        'test_size':1000, # 1000
-        'train_batch_size':25,
-        'validation_batch_size':512,
-        'num_workers':2,
-        'loss':nn.BCELoss(),
-        'data_factor': 1  # between 0 and 1, how much of the data is used.
-    }
-    # main(**kwargs)
-    # To run this as jupyter notebook change the following:
-    #   change reading of csv
-    #   uncomment the blockstring at the beginning of the file
-    data = load_data('save.p')
-    x = generate_data()
-    print(x)
+def try_model(model):
+    a = input('Please enter your input sentence: ')
+    a = long_roberta(a)
+    pred = model(a)
+    print(pred.item())
+    print('Where 1 is about the topic and 0 is not.\n')
+
+
+def prompt_engineering_acc(topic, dataframe):
+    acc = []
+    for row in dataframe.reset_index().iterrows():
+        inp = row['sentences']
+        out = row['labels']
+        prompt = f'Answer with either "yes" or "no". Is the following sentence about {topic}?\n\n{inp}\n\nAnswer:'
+        response = openai.Completion.create(model="text-davinci-003", prompt=prompt, temperature=0, max_tokens=2)
+        response = response['choices'][0]['text']
+        if response.startswith(' y'):
+            response = 1
+        elif response.startswith(' n'):
+            response = 0
+        else:
+            print(f'Bad response from openai: "{response}".')
+        if isinstance(response, int):
+            if response == out:
+                acc.append(1)
+            else:
+                acc.append(0)
+    return 100 * sum(acc) / len(acc)
+
+
+if __name__ == "__main__":
+    t = TopicIdentifier()
+    df = pd.read_csv('imdbdataset.csv', names=['sentences', 'labels'], header=0)
+    df['labels'][df['labels'] == 'positive'] = True
+    df['labels'][df['labels'] == 'negative'] = False
+    t.raw_data = df
+    t.embedd_data(topic='movies')
+    history, model = t.train(epochs=10, lr=0.01, val_frac=0.1, batch_size=10, loss=nn.BCELoss())
+    history.plot()
+
+    topic = 'biology'
+    topic2 = 'chemistry'
+    ti = TopicIdentifier()
+    t2 = TopicIdentifier()
+    ti.generate_training_data(topic)
+    t2.generate_training_data(topic2)
+    acc = prompt_engineering_acc(topic, ti.raw_data)
+    ac2 = prompt_engineering_acc(topic2, t2.raw_data)
+    print(f'{topic} prompt engineering: {acc}')
+    print(f'{topic2} prompt engineering: {ac2}')
+    print(f'{topic} analyse ----------------------------')
+    input('go?')
+    ti.analyse_training_data()
+    print(f'{topic2} analyse ----------------------------')
+    input('go?')
+    t2.analyse_training_data()
+    ti.embedd_data(topic)
+    t2.embedd_data(topic2)
+    history, model = ti.train(epochs=10, lr=0.0001, val_frac=0.1, batch_size=10, loss=nn.BCELoss())
+    history2, model2 = ti.train(epochs=10, lr=0.0001, val_frac=0.1, batch_size=10, loss=nn.BCELoss())
+    input(f'Now come the graphs from {topic}.')
+    history.plot()
+    input(f'Now come the graphs from {topic2}')
+
+# Far higher diversity in not topic related samples needed. Normal conversation, random sequences of letters, etc.
+# What else?

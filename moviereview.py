@@ -369,7 +369,65 @@ Introduction
 
 Prompt engineering
 Analyse dataset
-results of my network in beatiful graphs
+results of my network in beautiful graphs
 
 Speed comparison between my network and prompt engineering
+
+CONCRETE:
+Hello Evererybody, here I show you how I've spend my time this week, what I've learned and what I've achieved
+
+Started with: (All purely training)
+    Diamond
+        Goal: Estimate diamond price by multiple properties-
+        Challenge: prepare data with:
+            one-hot encoding
+            min max
+            logarythmic scale for prices
+        result: Graph
+    Movie review sentiment - fail
+        Goal: classfiy a movie review as positive or negative
+        Challenge: Embedd text data, ?
+        Result: Graphs from chat with Zak, no success.
+            maybe inputs to long?
+    Twitter review sentiment
+        Goal: classify sentiment as positive or negative
+        Challenge: Analyse Dataset fully and find problem with movie review.
+            Shorter inputs, balanced, very large dataset (1.6 million)
+        Result: ?
+Topic identification
+    class and its functions
+    data generation loop
+        experience
+            examples
+            pretty repetitive -> can easily be sorted
+            -> use of keywords and subtopics
+            more diversity in false prompts needed
+        solution?
+        numbers of how much and average percentage of duplicates
+    analyse data function
+        check length
+            why? because of possible truncation -> as learned from movie reviews
+        rest of analyse
+            link where I got it from
+            examples of analysation
+    data is embedded
+    model is trained
+        history object keeps track of everything and is returned as well as the full trained model
+        model is automatically saved.
+    outcome:
+        examples of graphs as well as live show of models to different topics. 
+        comparison to prompt engineering
+    
+Therefore todo:
+    Reproduce movie review graphs
+    Analyse, ideally fully solve movie reviews
+    improve and then update the generate data function
+    analyse generated datasets to biology and chemistry and write them to data generation.
+    compare my program to prompt engineering and analyse accuracy
+    prepare live presentation for biology and chemistry
+    Graph training for chemistry and biology.
+    
+    Comment through the code!
+    
+
 '''

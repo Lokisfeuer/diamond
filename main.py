@@ -1,4 +1,5 @@
-import numpy
+# TODO: Comment thoroughly through file
+
 import numpy as np
 from sentence_transformers import SentenceTransformer
 import torch
@@ -19,11 +20,12 @@ import seaborn as sns
 from IPython.display import HTML, display
 from wordcloud import WordCloud
 import nltk
-nltk.download('stopwords')
+# nltk.download('stopwords') # uncomment this line to use the NLTK Downloader
 from nltk.corpus import stopwords
 import os
 import pickle
 from datetime import datetime as d
+import math
 
 openai.api_key = os.getenv('OPENAI_API_KEY')
 
@@ -114,21 +116,26 @@ class History():
         self.history['steps'].append(step)
 
 
-    def plot(self):
+    def plot(self, path=None):
         figures = []
         for i in self.kwargs.keys():
             fig, ax = plt.subplots()
             ax.plot(self.history['steps'], self.history['val_' + i], 'b')
             ax.plot(self.history['steps'], self.history['tra_' + i], 'r')
-            print(f'{i}:')
-            plt.show()
+            ax.set_title(i.upper())
+            ax.set_ylabel(i)
+            ax.set_xlabel('Epochs')
             figures.append(fig)
-            plt.clf()
-        return figures
+            if path is None:
+                plt.show()
+                plt.clf()
+            else:
+                plt.savefig(f"{path}/{i}")
+        return figures  # what is this?
 
 
 
-def generate_data(data=None, topic='Biology', nr=15):
+def generate_data(topic, data=None, nr=15):
     def ask_ai(nr, prompt):
         response = openai.Completion.create(model="text-davinci-003", prompt=prompt, temperature=1, max_tokens=10*nr)
         response = '1.' + response['choices'][0]['text'] + '\n'
@@ -157,12 +164,12 @@ def generate_data(data=None, topic='Biology', nr=15):
         print(f'Writing sentences about {topic}.')
         # nr = 15
         fac = 1
-        prompt = f'Give me {nr*2} independent keywords to the topic biology.\n\n1.'
+        prompt = f'Give me {nr*2} independent keywords to the topic {topic}.\n\n1.'
         all_sentences.extend(gen_sentences(nr*2, fac, prompt))
         with open("save.p", "wb") as f:
             pickle.dump(all_sentences, f)
         print(f'Writing sentences not about {topic}.')
-        prompt = f'Give me {nr} topics fully unrelated to biology.\n\n1.'
+        prompt = f'Give me {nr} topics fully unrelated to {topic}.\n\n1.'
         all_sentences.extend(gen_sentences(nr, 2*fac, prompt))
         with open("save.p", "wb") as f:
             pickle.dump(all_sentences, f)
@@ -194,7 +201,6 @@ def generate_data(data=None, topic='Biology', nr=15):
         data = data[mapping[1:]]
     pd.DataFrame(data).to_csv(f"{topic.replace(' ', '_')}_generated_data.csv", index = False, header = ['sentences', 'labels'])
     return pd.read_csv(f"{topic.replace(' ', '_')}_generated_data.csv")
-    # TODO needs better filters and better quality. Especially empty inputs need to be filtered out!
 
 
 def long_roberta(sentences):
@@ -228,7 +234,7 @@ def long_roberta(sentences):
     return sentence_embeddings
 
 
-def prepare_data_slowly(data):
+def prepare_data_slowly(data, topic):
     # data = data[data.review.str.split().str.len().le(64)]
     np_data = data.to_numpy().transpose()
     # use sentence embedding to encode the reviews
@@ -236,7 +242,7 @@ def prepare_data_slowly(data):
     embedded_data = np.array([[0,0]])
     # embedded_data = torch.load('embedded_data.pt')
     k = 100
-    for i in range(round(len(np_data[0]) / k)):
+    for i in range(math.ceil(len(np_data[0]) / k)):
         reviews = long_roberta(list(np_data[0][k*i:k*i+k]))
         labels = np_data[1][k*i:k*i+k]
         # reviews = torch.tensor_split(reviews, 0, dim=0)
@@ -246,7 +252,7 @@ def prepare_data_slowly(data):
         if i == 0:
             embedded_data = embedded_data[1:]
         # embedded_data.extend(a)
-        torch.save(embedded_data, 'embedded_data.pt')
+        torch.save(embedded_data, f'embedded_data_{topic}.pt')
         print(f'saved {i+1} / {len(np_data[0]) / k}')
     return embedded_data.transpose()
 
@@ -287,10 +293,11 @@ def analyse_full_data(data):
     print(f'Number of unique sentences: {data["sentences"].nunique()}')
     duplicates = data[data.duplicated()]
     print(f'Number of duplicate rows:\n{len(duplicates)}')
-    print(f'Check for nulls: {data.isnull().sum()}')
+    print(f'Check for nulls:\n{data.isnull().sum()}')
     sns.countplot(x=data['labels'])  # ploting distribution for easier understanding
     print(data.head(3))
 
+    print('A few random examples from the dataset:')
     # let's see how data is looklike
     random_index = random.randint(0, data.shape[0] - 3)
     for row in data[['sentences', 'labels']][random_index:random_index + 3].itertuples():
@@ -298,8 +305,8 @@ def analyse_full_data(data):
         class_name = "About topic"
         if label == 0:
             class_name = "Not about topic"
-        display(HTML(f"<h5><b style='color:red'>Text: </b>{text}</h5>"))
-        display(HTML(f"<h5><b style='color:red'>Target: </b>{class_name}<br><hr></h5>"))
+        print(f'TEXT: {text}')
+        print(f'LABEL: {label}')
     # data contain so much garbage needs to be cleaned
 
     truedata = data[data['labels'] == 1]
@@ -326,7 +333,7 @@ def analyse_full_data(data):
 
     data['text_word_count'] = data['sentences'].apply(lambda x: len(x.split()))
 
-    numerical_feature_cols = ['text_word_count']
+    numerical_feature_cols = ['text_word_count']  # numerical_feature_cols = data['text_word_count']
 
     plt.figure(figsize=(20, 3))
     for i, col in enumerate(numerical_feature_cols):
@@ -363,32 +370,32 @@ class TopicIdentifier:
 
     def generate_training_data(self, topic, real=True):
         if real:
-            self.raw_data = generate_data(topic=topic, nr=15)
+            self.raw_data = generate_data(topic, nr=15)
         else:
             data = load_data('save.p')
-            self.raw_data = generate_data(data=data, topic=topic, nr=15)
+            self.raw_data = generate_data(topic, data=data, nr=15)
 
-    def embedd_data(self, real=True):
+    def embedd_data(self, topic, real=True):
         def get_element(arr):
             return arr[0]
         if real:
-            self.embedded_data = prepare_data_slowly(self.raw_data)
+            self.embedded_data = prepare_data_slowly(self.raw_data, topic)
         else:
-            self.embedded_data = torch.load('embedded_data.pt').transpose()
-        tpl = tuple(map(get_element, tuple(numpy.array_split(self.embedded_data[0], len(self.embedded_data[0])))))
+            self.embedded_data = torch.load(f'embedded_data_{topic}.pt').transpose()
+        tpl = tuple(map(get_element, tuple(np.array_split(self.embedded_data[0], len(self.embedded_data[0])))))
         self.sentences = torch.cat(tpl)
         self.labels = self.embedded_data[1]
         self.labels[self.labels == True] = 1.
         self.labels[self.labels == False] = 0.
-        self.labels = numpy.expand_dims(self.labels, axis=1).astype('float32')
+        self.labels = np.expand_dims(self.labels, axis=1).astype('float32')
         self.labels = torch.from_numpy(self.labels)
         self.dataset = CustomTopicDataset(self.sentences, self.labels)
 
     def analyse_training_data(self):
-        check_length(self.raw_data)
+        #check_length(self.raw_data)
         analyse_full_data(self.raw_data)
 
-    def train(self, epochs, lr=0.01, val_frac=0.1, batch_size=25, loss=nn.BCELoss()):
+    def train(self, epochs=10, lr=0.001, val_frac=0.1, batch_size=25, loss=nn.BCELoss()):
         def get_acc(pred, target):
             pred_tag = torch.round(pred)
 
@@ -425,13 +432,16 @@ class TopicIdentifier:
                 self.optimizer.zero_grad()
                 self.running_loss += l.item()
                 # TODO: Make this dynamic to about 5 saves per epoch.
-                if (step + 1) % 100 == 0:  # if (step+1) % 100 == 0:
+                if (step + 1) % math.floor(len(self.dataloader)) == 0:  # if (step+1) % 100 == 0:
                     print(f'current loss:\t\t{self.running_loss / 100}')
                     self.running_loss = 0
                     history.save(epoch + step / len(self.dataloader))
                     # save current state of the model to history
-        now = str(d.now().isoformat()).replace(':', 'I').replace('.', 'i')
-        torch.save(self.model, f"model_{now}")
+        now = str(d.now().isoformat()).replace(':', 'I').replace('.', 'i').replace('-', '_')
+        os.mkdir(f"model_{now}")
+        torch.save(self.model, f"model_{now}/model.pt")
+        print(f'Model saved to "model_{now}/model.pt"')
+        history.plot(f"model_{now}")
         return history, self.model
 
 def load_data(filename):
@@ -447,13 +457,74 @@ def try_model(model):
     print('Where 1 is about the topic and 0 is not.\n')
 
 
+def prompt_engineering_acc(topic, dataframe):
+    acc = []
+    for idx, row in dataframe.reset_index().iterrows():
+        inp = row['sentences']
+        out = row['labels']
+        prompt = f'Answer with either "yes" or "no". Is the following sentence about {topic}?\n\n{inp}\n\nAnswer:'
+        response = openai.Completion.create(model="text-davinci-003", prompt=prompt, temperature=0, max_tokens=2)
+        response = response['choices'][0]['text']
+        if response.lower().startswith(' y'):
+            response = 1
+        elif response.lower().startswith(' n'):
+            response = 0
+        else:
+            print(f'Bad response from openai: "{response}".')
+        if isinstance(response, int):
+            if response == out:
+                acc.append(1)
+            else:
+                acc.append(0)
+    return 100*sum(acc)/len(acc)
+
+
+
 if __name__ == "__main__":
-    ti = TopicIdentifier()
-    ti.generate_training_data('biology')
-    ti.analyse_training_data()
-    ti.embedd_data()
-    # model = torch.load('model_0000-00-XXXXXIXXIXXi000000')
-    history, model = ti.train(epochs=15, lr=0.0001, val_frac=0.1, batch_size=10, loss=nn.BCELoss())
-    history.plot()
+    '''
+    biology = torch.load('model_biology.pt')
+    chemistry = torch.load('model_chemistry.pt')
     while True:
-        try_model(model)
+        print('BIOLOGY:')
+        try_model(biology)
+        print('CHEMISTRY:')
+        try_model(chemistry)
+    '''
+    t = TopicIdentifier()
+    df = pd.read_csv('imdbdataset.csv', names=['sentences', 'labels'], header=0)
+    df['labels'][df['labels'] == 'positive'] = True
+    df['labels'][df['labels'] == 'negative'] = False
+    t.raw_data = df
+    t.embedd_data(topic='movies')
+    history, model = t.train(epochs=10, lr=0.01, val_frac=0.1, batch_size=10, loss=nn.BCELoss())
+    history.plot()
+
+
+
+    topic = 'biology'
+    topic2 = 'chemistry'
+    ti = TopicIdentifier()
+    t2 = TopicIdentifier()
+    ti.generate_training_data(topic)
+    t2.generate_training_data(topic2)
+    acc = prompt_engineering_acc(topic, ti.raw_data)
+    ac2 = prompt_engineering_acc(topic2, t2.raw_data)
+    print(f'{topic} prompt engineering: {acc}')
+    print(f'{topic2} prompt engineering: {ac2}')
+    print(f'{topic} analyse ----------------------------')
+    input('go?')
+    ti.analyse_training_data()
+    print(f'{topic2} analyse ----------------------------')
+    input('go?')
+    t2.analyse_training_data()
+    ti.embedd_data(topic)
+    t2.embedd_data(topic2)
+    history, model = ti.train(epochs=10, lr=0.0001, val_frac=0.1, batch_size=10, loss=nn.BCELoss())
+    history2, model2 = ti.train(epochs=10, lr=0.0001, val_frac=0.1, batch_size=10, loss=nn.BCELoss())
+    input(f'Now come the graphs from {topic}.')
+    history.plot()
+    input(f'Now come the graphs from {topic2}')
+
+
+
+# Far higher diversity in not topic related samples needed. Normal conversation, random sequences of letters, etc.
